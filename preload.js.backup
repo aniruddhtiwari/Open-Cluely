@@ -59,7 +59,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   updateAppIcon: (iconKey) => ipcRenderer.invoke('update-app-icon', iconKey),
   updateActiveSkill: (skill) => ipcRenderer.invoke('update-active-skill', skill),
-  updateActiveProfile: (profile) => ipcRenderer.invoke('update-active-profile', profile),
   restartAppForStealth: () => ipcRenderer.invoke('restart-app-for-stealth'),
   closeWindow: () => ipcRenderer.invoke('close-window'),
   notifyMainWindowReady: () => {

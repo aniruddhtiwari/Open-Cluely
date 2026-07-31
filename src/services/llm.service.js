@@ -121,7 +121,7 @@ class LLMService {
    * @param {string|null} programmingLanguage - optional language context for skills that need it
    * @returns {Promise<{response: string, metadata: object}>}
    */
-  async processImageWithSkill(imageBuffer, mimeType, activeSkill, sessionMemory = [], programmingLanguage = null) {
+  async processImageWithSkill(imageBuffer, mimeType, activeSkill, activeProfile, sessionMemory = [], programmingLanguage = null) {
     if (!this.isInitialized) {
       throw new Error('LLM service not initialized. Check Gemini API key configuration.');
     }
@@ -136,7 +136,7 @@ class LLMService {
     try {
       // Build system instruction using the skill prompt (with optional language injection)
       const { promptLoader } = require('../../prompt-loader');
-      const skillPrompt = promptLoader.getSkillPrompt(activeSkill, programmingLanguage) || '';
+      const skillPrompt = promptLoader.getSkillPrompt(activeSkill, activeProfile, programmingLanguage) || '';
 
       // Build request with text + image parts
       const base64 = imageBuffer.toString('base64');
@@ -225,7 +225,7 @@ class LLMService {
     }
   }
 
-  async processImageWithSkillStream(imageBuffer, mimeType, activeSkill, sessionMemory = [], programmingLanguage = null, onDelta = null) {
+  async processImageWithSkillStream(imageBuffer, mimeType, activeSkill, activeProfile, sessionMemory = [], programmingLanguage = null, onDelta = null) {
     if (!this.isInitialized) {
       throw new Error('LLM service not initialized. Check Gemini API key configuration.');
     }
@@ -239,7 +239,7 @@ class LLMService {
 
     try {
       const { promptLoader } = require('../../prompt-loader');
-      const skillPrompt = promptLoader.getSkillPrompt(activeSkill, programmingLanguage) || '';
+      const skillPrompt = promptLoader.getSkillPrompt(activeSkill, activeProfile, programmingLanguage) || '';
       const base64 = imageBuffer.toString('base64');
 
       const geminiRequest = {
@@ -293,7 +293,7 @@ class LLMService {
         error: error.message,
         requestId: this.requestCount
       });
-      return this.processImageWithSkill(imageBuffer, mimeType, activeSkill, sessionMemory, programmingLanguage);
+      return this.processImageWithSkill(imageBuffer, mimeType, activeSkill, activeProfile, sessionMemory, programmingLanguage);
     }
   }
 
@@ -302,7 +302,7 @@ class LLMService {
     return `Analyze this image for a ${activeSkill.toUpperCase()} question. Extract the problem concisely and provide the best possible solution with explanation and final code.${langNote}`;
   }
 
-  async processTextWithSkill(text, activeSkill, sessionMemory = [], programmingLanguage = null) {
+  async processTextWithSkill(text, activeSkill, activeProfile, sessionMemory = [], programmingLanguage = null) {
     if (!this.isInitialized) {
       throw new Error('LLM service not initialized. Check Gemini API key configuration.');
     }
@@ -319,7 +319,7 @@ class LLMService {
         requestId: this.requestCount
       });
 
-      const geminiRequest = this.buildGeminiRequest(text, activeSkill, sessionMemory, programmingLanguage);
+      const geminiRequest = this.buildGeminiRequest(text, activeSkill, activeProfile,  sessionMemory, programmingLanguage);
 
       const preferAlternative = !!config.get('llm.gemini.enableFallbackMethod');
       let response;
@@ -389,7 +389,7 @@ class LLMService {
     }
   }
 
-  async processTextWithSkillStream(text, activeSkill, sessionMemory = [], programmingLanguage = null, onDelta = null) {
+  async processTextWithSkillStream(text, activeSkill, activeProfile, sessionMemory = [], programmingLanguage = null, onDelta = null) {
     if (!this.isInitialized) {
       throw new Error('LLM service not initialized. Check Gemini API key configuration.');
     }
@@ -398,7 +398,7 @@ class LLMService {
     this.requestCount++;
 
     try {
-      const geminiRequest = this.buildGeminiRequest(text, activeSkill, sessionMemory, programmingLanguage);
+      const geminiRequest = this.buildGeminiRequest(text, activeSkill, activeProfile, sessionMemory, programmingLanguage);
 
       const fullText = await this.executeStreamingRequest(geminiRequest, (delta) => {
         if (typeof onDelta === 'function' && delta) {
@@ -433,7 +433,7 @@ class LLMService {
         error: error.message,
         requestId: this.requestCount
       });
-      return this.processTextWithSkill(text, activeSkill, sessionMemory, programmingLanguage);
+      return this.processTextWithSkill(text, activeSkill, activeProfile, sessionMemory, programmingLanguage);
     }
   }
 
@@ -553,14 +553,14 @@ class LLMService {
     }
   }
 
-  buildGeminiRequest(text, activeSkill, sessionMemory, programmingLanguage) {
+  buildGeminiRequest(text, activeSkill, activeProfile, sessionMemory, programmingLanguage) {
     // Check if we have the new conversation history format
     const sessionManager = require('../managers/session.manager');
     
     if (sessionManager && typeof sessionManager.getConversationHistory === 'function') {
       const conversationHistory = sessionManager.getConversationHistory(15);
       const skillContext = sessionManager.getSkillContext(activeSkill, programmingLanguage);
-      return this.buildGeminiRequestWithHistory(text, activeSkill, conversationHistory, skillContext, programmingLanguage);
+      return this.buildGeminiRequestWithHistory(text, activeSkill, activeProfile, conversationHistory, skillContext, programmingLanguage);
     }
 
     // Fallback to old method for compatibility - now with programming language support
@@ -599,7 +599,7 @@ class LLMService {
     return request;
   }
 
-  buildGeminiRequestWithHistory(text, activeSkill, conversationHistory, skillContext, programmingLanguage) {
+  buildGeminiRequestWithHistory(text, activeSkill, activeProfile, conversationHistory, skillContext, programmingLanguage) {
     const request = {
       contents: []
     };
@@ -607,19 +607,32 @@ class LLMService {
     this.applyGenerationDefaults(request);
 
     // Use the skill prompt from context (which may already include programming language)
-    if (skillContext.skillPrompt) {
-      request.systemInstruction = {
-        parts: [{ text: skillContext.skillPrompt }]
-      };
-      
-      logger.debug('Using skill context prompt as system instruction', {
-        skill: activeSkill,
-        programmingLanguage: programmingLanguage || 'not specified',
-        promptLength: skillContext.skillPrompt.length,
-        requiresProgrammingLanguage: skillContext.requiresProgrammingLanguage || false,
-        hasLanguageInjection: programmingLanguage && skillContext.requiresProgrammingLanguage
-      });
-    }
+    const { promptLoader } = require('../../prompt-loader');
+
+const combinedPrompt =
+  promptLoader.getCombinedPrompt(
+    activeSkill,
+    activeProfile,
+    programmingLanguage
+  ) || skillContext.skillPrompt || '';
+
+if (combinedPrompt) {
+  request.systemInstruction = {
+    parts: [{ text: combinedPrompt }]
+  };
+
+  logger.debug('Using combined skill and profile prompt as system instruction', {
+    skill: activeSkill,
+    profile: activeProfile,
+    programmingLanguage: programmingLanguage || 'not specified',
+    promptLength: combinedPrompt.length,
+    requiresProgrammingLanguage:
+      skillContext.requiresProgrammingLanguage || false,
+    hasLanguageInjection:
+      programmingLanguage &&
+      skillContext.requiresProgrammingLanguage
+  });
+}
 
     // Add conversation history (excluding system messages) with validation
     const conversationContents = conversationHistory
@@ -712,7 +725,7 @@ class LLMService {
     return request;
   }
 
-  buildIntelligentTranscriptionRequestWithHistory(text, activeSkill, conversationHistory, skillContext, programmingLanguage) {
+  buildIntelligentTranscriptionRequestWithHistory(text, activeSkill, activeProfile, conversationHistory, skillContext, programmingLanguage) {
     const request = {
       contents: []
     };

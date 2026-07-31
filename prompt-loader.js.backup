@@ -5,9 +5,7 @@ class PromptLoader {
   constructor() {
     this.prompts = new Map();
     this.promptsLoaded = false;
-	this.profiles = new Map();
-	this.profilesLoaded = false;
-	this.skillPromptSent = new Set();
+    this.skillPromptSent = new Set();
     // Focus only on DSA
     this.skillsRequiringProgrammingLanguage = ['dsa'];
   }
@@ -45,53 +43,6 @@ class PromptLoader {
       throw new Error(`Failed to load skill prompts: ${error.message}`);
     }
   }
-  
-	/**
-	 * Load all profile prompts from the profiles directory
-	 */
-  loadProfiles() {
-	  if (this.profilesLoaded) {
-		return;
-	  }
-
-	  const profilesDir = path.join(__dirname, 'profiles');
-
-	  try {
-		const files = fs.readdirSync(profilesDir);
-
-		for (const file of files) {
-		  if (file.endsWith('.md')) {
-			const profileName = path.basename(file, '.md').trim().toLowerCase();
-			const filePath = path.join(profilesDir, file);
-			const profileContent = fs.readFileSync(filePath, 'utf8');
-
-			this.profiles.set(profileName, profileContent);
-		  }
-		}
-
-    this.profilesLoaded = true;
-  } catch (error) {
-    console.error('Error loading profile prompts:', error);
-    throw new Error(`Failed to load profile prompts: ${error.message}`);
-  }
-}
-
-/**
- * Get the prompt content for a specific profile
- * @param {string} profileName - The profile name
- * @returns {string|null} The profile content or null if not found
- */
-getProfilePrompt(profileName) {
-  if (!this.profilesLoaded) {
-    this.loadProfiles();
-  }
-
-  const normalizedProfileName = String(profileName || '')
-    .trim()
-    .toLowerCase();
-
-  return this.profiles.get(normalizedProfileName) || null;
-}
 
   /**
    * Get the system prompt for a specific skill with optional programming language injection
@@ -118,15 +69,6 @@ getProfilePrompt(profileName) {
 
     return promptContent;
   }
-  
-  getCombinedPrompt(skillName, profileName, programmingLanguage = null) {
-	const skillPrompt = this.getSkillPrompt(skillName, programmingLanguage) || '';
-	const profilePrompt = this.getProfilePrompt(profileName) || '';
-
-	return [skillPrompt, profilePrompt]
-    .filter(Boolean)
-    .join('\n\n');
-}
 
   /**
    * Inject programming language context into skill prompts

@@ -19,8 +19,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const geminiKeyInput = document.getElementById('geminiKey');
     const windowGapInput = document.getElementById('windowGap');
     const codingLanguageSelect = document.getElementById('codingLanguage');
-    const activeSkillSelect = document.getElementById('activeSkill');
-    const iconGrid = document.getElementById('iconGrid');
+	const activeSkillSelect = document.getElementById('activeSkill');
+	const activeProfileSelect = document.getElementById('activeProfile');
+	const iconGrid = document.getElementById('iconGrid');
 
     // Check if window.api exists
     if (!window.api) {
@@ -92,10 +93,16 @@ document.addEventListener('DOMContentLoaded', () => {
 
         // Set C++ as default if no coding language is specified
         if (codingLanguageSelect) {
-            codingLanguageSelect.value = settings.codingLanguage || 'cpp';
+            codingLanguageSelect.value = settings.codingLanguage || 'python';
         }
 
-        if (settings.activeSkill && activeSkillSelect) activeSkillSelect.value = settings.activeSkill;
+        if (settings.activeSkill && activeSkillSelect) {
+			activeSkillSelect.value = settings.activeSkill;
+		}
+
+		if (settings.activeProfile && activeProfileSelect) {
+			activeProfileSelect.value = settings.activeProfile;
+		}
 
         // Handle icon selection
         const selectedIcon = settings.selectedIcon || settings.appIcon;
@@ -150,7 +157,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (windowGapInput) settings.windowGap = windowGapInput.value;
         if (codingLanguageSelect) settings.codingLanguage = codingLanguageSelect.value;
         if (activeSkillSelect) settings.activeSkill = activeSkillSelect.value;
-        
+        if (activeProfileSelect) settings.activeProfile = activeProfileSelect.value;
         window.api.send('save-settings', settings);
     };
 
@@ -234,6 +241,13 @@ document.addEventListener('DOMContentLoaded', () => {
             // Also update the main window
             window.api.send('update-skill', e.target.value);
         });
+	}
+
+	// Profile selection handler
+	if (activeProfileSelect) {
+		activeProfileSelect.addEventListener('change', () => {
+        saveSettings();
+    });
     }
 
     updateSpeechFieldStates();
