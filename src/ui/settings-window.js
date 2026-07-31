@@ -30,13 +30,69 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // Request current settings when window opens
-    const requestCurrentSettings = () => {
-        if (window.electronAPI && window.electronAPI.getSettings) {
-            window.electronAPI.getSettings().then(settings => {
-                loadSettingsIntoUI(settings);
-            }).catch(error => {
-                console.error('Failed to get settings:', error);
-            });
+    const requestCurrentSettings = async () => {
+        if (!window.electronAPI || !window.electronAPI.getSettings) return;
+
+        let settings;
+        try {
+            settings = await window.electronAPI.getSettings();
+            loadSettingsIntoUI(settings);
+        } catch (error) {
+            console.error('Failed to get settings:', error);
+            return;
+        }
+
+        try {
+            if (!window.electronAPI.getAvailablePromptOptions) {
+                throw new Error('getAvailablePromptOptions API is not available');
+            }
+
+            const options = await window.electronAPI.getAvailablePromptOptions();
+            populatePromptSelect(
+                activeSkillSelect,
+                options.skills,
+                settings.activeSkill,
+                'dsa',
+                'No skills found'
+            );
+            populatePromptSelect(
+                activeProfileSelect,
+                options.profiles,
+                settings.activeProfile,
+                'aniruddh',
+                'No profiles found'
+            );
+        } catch (error) {
+            console.error('Failed to load dynamic prompt options:', error);
+            populatePromptSelect(activeSkillSelect, [], null, 'dsa', 'No skills found');
+            populatePromptSelect(activeProfileSelect, [], null, 'aniruddh', 'No profiles found');
+        }
+    };
+
+    const populatePromptSelect = (select, items, savedValue, preferredValue, emptyLabel) => {
+        if (!select) return;
+
+        select.replaceChildren();
+
+        if (!Array.isArray(items) || items.length === 0) {
+            const option = new Option(emptyLabel, '');
+            option.disabled = true;
+            option.selected = true;
+            select.appendChild(option);
+            return;
+        }
+
+        items.forEach(item => {
+            select.appendChild(new Option(item.name, item.id));
+        });
+
+        const availableIds = new Set(items.map(item => item.id));
+        if (savedValue && availableIds.has(savedValue)) {
+            select.value = savedValue;
+        } else if (availableIds.has(preferredValue)) {
+            select.value = preferredValue;
+        } else {
+            select.value = items[0].id;
         }
     };
 
