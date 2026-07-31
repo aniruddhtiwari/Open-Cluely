@@ -867,7 +867,12 @@
 
       // Chat persistence and deduplication
       const CHAT_HISTORY_KEY = 'opencluely_chat_history_v1';
+      const MAX_COMPLETE_PAIRS = 3;
       let chatHistory = [];
+      let pairSequence = 0;
+      const pendingPairIds = [];
+      const streamingResponses = new Map();
+      const completedMessageIds = new Set();
       const recentResponseHashes = new Set();
       const RECENT_HASH_LIMIT = 50;
 
@@ -886,10 +891,76 @@
 
       function saveHistory() {
         try {
-          localStorage.setItem(CHAT_HISTORY_KEY, JSON.stringify(chatHistory.slice(-500)));
+          localStorage.setItem(CHAT_HISTORY_KEY, JSON.stringify(chatHistory));
         } catch (e) {
           console.warn('Failed to save history', e);
         }
+      }
+
+      function createPairId() {
+        pairSequence += 1;
+        return `pair-${Date.now()}-${pairSequence}`;
+      }
+
+      function isNearMessagesBottom() {
+        if (!chatMessages) return false;
+        return chatMessages.scrollHeight - chatMessages.scrollTop - chatMessages.clientHeight < 80;
+      }
+
+      function scrollMessagesIfNearBottom(wasNearBottom) {
+        if (chatMessages && wasNearBottom) chatMessages.scrollTop = chatMessages.scrollHeight;
+      }
+
+      function getCompletedPairIds(items = chatHistory) {
+        const pairs = new Map();
+        items.forEach(item => {
+          if (!item || item.kind !== 'message' || !item.pairId) return;
+          const pair = pairs.get(item.pairId) || { pairId: item.pairId, user: false, assistant: false };
+          if (item.type === 'user') pair.user = true;
+          if (item.type === 'assistant' && item.complete !== false) pair.assistant = true;
+          pairs.set(item.pairId, pair);
+        });
+        return Array.from(pairs.values())
+          .filter(pair => pair.user && pair.assistant)
+          .map(pair => pair.pairId);
+      }
+
+      function applyCompletedPairRetention(removeFromDom = true) {
+        const completedPairIds = getCompletedPairIds();
+        const excessCount = Math.max(0, completedPairIds.length - MAX_COMPLETE_PAIRS);
+        if (!excessCount) return;
+        const activePairIds = new Set(Array.from(streamingResponses.values()).map(stream => stream.pairId));
+        const removable = new Set(completedPairIds.slice(0, excessCount).filter(pairId => !activePairIds.has(pairId)));
+        if (!removable.size) return;
+        chatHistory = chatHistory.filter(item => !item.pairId || !removable.has(item.pairId));
+        if (removeFromDom && chatMessages) {
+          chatMessages.querySelectorAll('[data-pair-id]').forEach(element => {
+            if (removable.has(element.dataset.pairId)) element.remove();
+          });
+        }
+      }
+
+      function normalizeLoadedHistory(items) {
+        let currentPairId = null;
+        return items.map(item => {
+          if (!item) return item;
+          if (item.kind === 'snippet' && currentPairId && !item.pairId) {
+            return { ...item, pairId: currentPairId };
+          }
+          if (item.kind !== 'message') return item;
+          if (item.pairId) {
+            if (item.type === 'user') currentPairId = item.pairId;
+            return item;
+          }
+          if (item.type === 'user') {
+            currentPairId = createPairId();
+            return { ...item, pairId: currentPairId };
+          }
+          if (item.type === 'assistant' && currentPairId) {
+            return { ...item, pairId: currentPairId, complete: true };
+          }
+          return item;
+        });
       }
 
       function loadHistory() {
@@ -898,15 +969,20 @@
           if (!raw) return;
           const items = JSON.parse(raw);
           if (Array.isArray(items)) {
-            chatHistory = items;
+            chatHistory = normalizeLoadedHistory(items);
+            applyCompletedPairRetention(false);
+            chatHistory.forEach(item => {
+              if (item.type === 'assistant' && item.messageId) completedMessageIds.add(item.messageId);
+            });
             // Render
-            items.forEach(item => {
+            chatHistory.forEach(item => {
               if (item.kind === 'message') {
-                addMessage(item.text, item.type, true);
+                addMessage(item.text, item.type, true, item);
               } else if (item.kind === 'snippet') {
-                addCodeSnippet(item.language, item.code, true);
+                addCodeSnippet(item.language, item.code, true, item);
               }
             });
+            saveHistory();
           }
         } catch (e) {
           console.warn('Failed to load history', e);
@@ -919,6 +995,9 @@
           if (!ok) return;
         }
         chatHistory = [];
+        pendingPairIds.length = 0;
+        streamingResponses.clear();
+        completedMessageIds.clear();
         saveHistory();
         // Clear DOM
         if (chatMessages) chatMessages.innerHTML = '';
@@ -1063,14 +1142,17 @@
       loadSessionDocuments();
 
       // Basic message function with markdown support for assistant messages
-      function addMessage(text, type = 'user', skipPersist = false) {
+      function addMessage(text, type = 'user', skipPersist = false, metadata = {}) {
         if (!chatMessages) {
           console.error('Chat messages element not found!');
-          return;
+          return null;
         }
 
+        const wasNearBottom = isNearMessagesBottom();
         const messageDiv = document.createElement('div');
         messageDiv.className = `message ${type}`;
+        if (metadata.pairId) messageDiv.dataset.pairId = metadata.pairId;
+        if (metadata.messageId) messageDiv.dataset.messageId = metadata.messageId;
 
         const timeDiv = document.createElement('div');
         timeDiv.className = 'message-time';
@@ -1091,12 +1173,13 @@
         messageDiv.appendChild(textDiv);
 
         chatMessages.appendChild(messageDiv);
-        chatMessages.scrollTop = chatMessages.scrollHeight;
+        scrollMessagesIfNearBottom(wasNearBottom);
 
         if (!skipPersist) {
-          chatHistory.push({ kind: 'message', type, text });
+          chatHistory.push({ kind: 'message', type, text, ...metadata });
           saveHistory();
         }
+        return messageDiv;
       }
 
       // Markdown formatter using markdown.js library
@@ -1121,10 +1204,11 @@
       }
 
       // Show thinking indicator
-      function showThinkingIndicator() {
+      function showThinkingIndicator(pairId = '') {
+        if (pairId && !pendingPairIds.includes(pairId)) return;
         const thinkingDiv = document.createElement('div');
         thinkingDiv.className = 'message assistant thinking';
-        thinkingDiv.id = 'thinking-indicator';
+        thinkingDiv.dataset.thinkingFor = pairId;
 
         const timeDiv = document.createElement('div');
         timeDiv.className = 'message-time';
@@ -1137,13 +1221,17 @@
         thinkingDiv.appendChild(timeDiv);
         thinkingDiv.appendChild(textDiv);
 
+        const wasNearBottom = isNearMessagesBottom();
         chatMessages.appendChild(thinkingDiv);
-        chatMessages.scrollTop = chatMessages.scrollHeight;
+        scrollMessagesIfNearBottom(wasNearBottom);
       }
 
       // Hide thinking indicator
-      function hideThinkingIndicator() {
-        const thinkingIndicator = document.getElementById('thinking-indicator');
+      function hideThinkingIndicator(pairId = '') {
+        const selector = pairId
+          ? `[data-thinking-for="${CSS.escape(pairId)}"]`
+          : '.message.assistant.thinking';
+        const thinkingIndicator = chatMessages && chatMessages.querySelector(selector);
         if (thinkingIndicator) {
           thinkingIndicator.remove();
         }
@@ -1299,10 +1387,12 @@
           }
         });
       }
-      function addCodeSnippet(language, code, skipPersist = false) {
+      function addCodeSnippet(language, code, skipPersist = false, metadata = {}) {
         if (!chatMessages) return;
+        const wasNearBottom = isNearMessagesBottom();
         const messageDiv = document.createElement('div');
         messageDiv.className = 'message assistant';
+        if (metadata.pairId) messageDiv.dataset.pairId = metadata.pairId;
         const timeDiv = document.createElement('div');
         timeDiv.className = 'message-time';
         timeDiv.textContent = new Date().toLocaleTimeString();
@@ -1333,15 +1423,99 @@
         messageDiv.appendChild(timeDiv);
         messageDiv.appendChild(textDiv);
         chatMessages.appendChild(messageDiv);
-        chatMessages.scrollTop = chatMessages.scrollHeight;
+        scrollMessagesIfNearBottom(wasNearBottom);
 
         try { if (window.Prism && Prism.highlightElement) { Prism.highlightElement(codeEl); } } catch (_) {}
 
         if (!skipPersist) {
-          chatHistory.push({ kind: 'snippet', language: lang, code: code || '' });
+          chatHistory.push({ kind: 'snippet', language: lang, code: code || '', ...metadata });
           saveHistory();
         }
       }
+
+      function enhanceAssistantCodeBlocks(container) {
+        if (!container) return;
+        container.querySelectorAll('pre').forEach(pre => {
+          if (pre.querySelector('.copy-btn')) return;
+          const code = pre.querySelector('code');
+          if (!code) return;
+          const copyBtn = document.createElement('button');
+          copyBtn.className = 'copy-btn';
+          copyBtn.textContent = 'Copy';
+          attachCopy(copyBtn, code.textContent || '');
+          pre.prepend(copyBtn);
+          try { if (window.Prism && Prism.highlightElement) Prism.highlightElement(code); } catch (_) {}
+        });
+      }
+
+      function renderAssistantText(textDiv, text) {
+        if (!textDiv) return;
+        textDiv.innerHTML = formatMarkdown(text || '');
+        enhanceAssistantCodeBlocks(textDiv);
+        if (window.renderMathInElement) window.renderMathInElement(textDiv);
+      }
+
+      function startUserPair(text) {
+        const pairId = createPairId();
+        pendingPairIds.push(pairId);
+        addMessage(text, 'user', false, { pairId, complete: false });
+        return pairId;
+      }
+
+      function startAssistantStream(messageId) {
+        if (!messageId || streamingResponses.has(messageId) || completedMessageIds.has(messageId)) return;
+        const pairId = pendingPairIds.shift() || createPairId();
+        hideThinkingIndicator(pairId);
+        const element = addMessage('', 'assistant', true, { pairId, messageId, complete: false });
+        if (!element) return;
+        streamingResponses.set(messageId, {
+          pairId,
+          element,
+          textDiv: element.querySelector('.message-text'),
+          text: ''
+        });
+      }
+
+      function appendAssistantStream(messageId, delta) {
+        if (!messageId || typeof delta !== 'string') return;
+        if (!streamingResponses.has(messageId)) startAssistantStream(messageId);
+        const stream = streamingResponses.get(messageId);
+        if (!stream) return;
+        const wasNearBottom = isNearMessagesBottom();
+        stream.text += delta;
+        renderAssistantText(stream.textDiv, stream.text);
+        scrollMessagesIfNearBottom(wasNearBottom);
+      }
+
+      function completeAssistantStream(messageId, response) {
+        if (!messageId) return false;
+        if (completedMessageIds.has(messageId)) return true;
+        if (!streamingResponses.has(messageId)) startAssistantStream(messageId);
+        const stream = streamingResponses.get(messageId);
+        if (!stream) return false;
+        const finalText = typeof response === 'string' && response.length ? response : stream.text;
+        const wasNearBottom = isNearMessagesBottom();
+        stream.text = finalText;
+        renderAssistantText(stream.textDiv, finalText);
+        streamingResponses.delete(messageId);
+        completedMessageIds.add(messageId);
+
+        const userEntry = chatHistory.find(item => item.pairId === stream.pairId && item.type === 'user');
+        if (userEntry) userEntry.complete = true;
+        chatHistory.push({
+          kind: 'message',
+          type: 'assistant',
+          text: finalText,
+          pairId: stream.pairId,
+          messageId,
+          complete: true
+        });
+        applyCompletedPairRetention(true);
+        saveHistory();
+        scrollMessagesIfNearBottom(wasNearBottom);
+        return true;
+      }
+
       function renderAssistantResponse(response) {
         if (!response || typeof response !== 'string') return;
         // Deduplication: avoid processing the same response twice
@@ -1417,10 +1591,21 @@
         });
 
         // Replace transcription LLM handler to store text + snippets
+        whysperAPI.onTranscriptionLlmResponseStart((event, data) => {
+          if (data && data.messageId) startAssistantStream(data.messageId);
+        });
+
+        whysperAPI.onTranscriptionLlmResponseChunk((event, data) => {
+          if (data && data.messageId) appendAssistantStream(data.messageId, data.delta || '');
+        });
+
         whysperAPI.onTranscriptionLlmResponse((event, data) => {
           if (data && data.response) {
-            try { hideThinkingIndicator(); } catch (_) {}
-            renderAssistantResponse(data.response);
+            const messageId = data.messageId || (data.metadata && data.metadata.messageId);
+            if (!completeAssistantStream(messageId, data.response)) {
+              try { hideThinkingIndicator(); } catch (_) {}
+              renderAssistantResponse(data.response);
+            }
           }
         });
       }
@@ -1501,12 +1686,12 @@
         sendButton.addEventListener('click', async () => {
           const text = messageInput.value.trim();
           if (text) {
-            addMessage(text, 'user');
+            const pairId = startUserPair(text);
             messageInput.value = '';
             
             // Show thinking indicator after user message
             setTimeout(() => {
-              showThinkingIndicator();
+              showThinkingIndicator(pairId);
             }, 300);
             
             // Send to main process for session memory storage and LLM processing
@@ -1540,10 +1725,10 @@
             e.preventDefault();
             const text = messageInput.value.trim();
             if (text) {
-              addMessage(text, 'user');
+              const pairId = startUserPair(text);
               messageInput.value = '';
               autoGrow(messageInput);
-              setTimeout(() => { showThinkingIndicator(); }, 300);
+              setTimeout(() => { showThinkingIndicator(pairId); }, 300);
               try {
                 if (whysperAPI && whysperAPI.sendChatMessage) {
                   await whysperAPI.sendChatMessage(text);
