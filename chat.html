@@ -419,6 +419,91 @@
         backdrop-filter: blur(10px);
         flex-shrink: 0;
       }
+      .session-document-strip {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        margin-bottom: 7px;
+        min-height: 24px;
+        overflow: hidden;
+      }
+      .session-document-strip[hidden] {
+        display: none;
+      }
+      .session-document-header,
+      .session-document-content {
+        display: flex;
+        align-items: center;
+        width: 100%;
+        gap: 6px;
+      }
+      .session-document-count {
+        flex: 1;
+        color: rgba(255, 255, 255, 0.72);
+        font-size: 9px;
+        font-weight: 600;
+      }
+      .session-document-chips {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        overflow-x: auto;
+        flex: 1;
+        scrollbar-width: none;
+      }
+      .session-document-chips::-webkit-scrollbar {
+        display: none;
+      }
+      .session-document-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        flex: 0 0 auto;
+        max-width: 220px;
+        padding: 4px 6px;
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        border-radius: 6px;
+        background: rgba(255, 255, 255, 0.08);
+        color: rgba(255, 255, 255, 0.9);
+        font-size: 10px;
+      }
+      .session-document-name {
+        max-width: 130px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .session-document-index-status {
+        color: #7ee787;
+        font-size: 9px;
+      }
+      .session-document-remove,
+      .session-documents-clear {
+        border: 0;
+        background: transparent;
+        color: rgba(255, 255, 255, 0.65);
+        cursor: pointer;
+        padding: 0 2px;
+        font-size: 10px;
+        -webkit-app-region: no-drag;
+      }
+      .session-document-remove:hover,
+      .session-documents-clear:hover {
+        color: #fff;
+      }
+      .session-documents-clear {
+        flex: 0 0 auto;
+        font-size: 9px;
+      }
+      .session-document-status {
+        flex: 0 0 auto;
+        color: rgba(255, 255, 255, 0.65);
+        font-size: 9px;
+        white-space: nowrap;
+      }
+      .session-document-status.error {
+        color: #ff8a94;
+      }
       .input-container {
         display: flex;
         align-items: center;
@@ -497,6 +582,24 @@
         background: rgba(255, 71, 87, 0.8);
         color: white;
         box-shadow: 0 0 15px rgba(255, 71, 87, 0.4);
+      }
+      .attachment-button {
+        background: rgba(255, 255, 255, 0.15);
+        border: none;
+        border-radius: 6px;
+        padding: 6px 9px;
+        color: rgba(255, 255, 255, 0.9);
+        cursor: pointer;
+        transition: all 0.2s;
+        -webkit-app-region: no-drag;
+      }
+      .attachment-button:hover:not(:disabled) {
+        background: rgba(255, 255, 255, 0.25);
+        color: #fff;
+      }
+      .attachment-button:disabled {
+        cursor: wait;
+        opacity: 0.5;
       }
       .help-text {
         color: rgba(255, 255, 255, 0.7);
@@ -694,6 +797,16 @@
       <div class="chat-messages" id="chatMessages"></div>
 
       <div class="chat-input">
+        <div class="session-document-strip" id="sessionDocumentStrip" hidden>
+          <div class="session-document-header" id="sessionDocumentHeader">
+            <span class="session-document-count" id="sessionDocumentCount"></span>
+            <button class="session-documents-clear" id="clearSessionDocumentsBtn" type="button">Clear all</button>
+          </div>
+          <div class="session-document-content">
+            <div class="session-document-chips" id="sessionDocumentChips"></div>
+            <span class="session-document-status" id="sessionDocumentStatus"></span>
+          </div>
+        </div>
         <div class="input-container">
           <textarea
             class="input-field"
@@ -701,6 +814,9 @@
             id="messageInput"
             rows="1"
           ></textarea>
+          <button class="attachment-button" id="addSessionDocumentsBtn" type="button" title="Add session documents" aria-label="Add session documents">
+            <i class="fas fa-paperclip"></i>
+          </button>
           <button class="mic-button" id="micButton">
             <i class="fas fa-microphone"></i>
           </button>
@@ -734,12 +850,20 @@
       const listeningDuration = document.getElementById('listeningDuration');
       const interimOverlay = document.getElementById('interimOverlay');
       const clearHistoryBtn = document.getElementById('clearHistoryBtn');
+      const sessionDocumentStrip = document.getElementById('sessionDocumentStrip');
+      const sessionDocumentHeader = document.getElementById('sessionDocumentHeader');
+      const sessionDocumentCount = document.getElementById('sessionDocumentCount');
+      const sessionDocumentChips = document.getElementById('sessionDocumentChips');
+      const sessionDocumentStatus = document.getElementById('sessionDocumentStatus');
+      const addSessionDocumentsBtn = document.getElementById('addSessionDocumentsBtn');
+      const clearSessionDocumentsBtn = document.getElementById('clearSessionDocumentsBtn');
 
       let isRecording = false;
       let isInteractive = true;
       let listeningStartTime = null;
       let listeningTimer = null;
       let speechAvailable = false;
+      let sessionDocumentStatusTimer = null;
 
       // Chat persistence and deduplication
       const CHAT_HISTORY_KEY = 'opencluely_chat_history_v1';
@@ -817,6 +941,95 @@
           applyMicVisibility();
         }
       }
+
+      function updateSessionDocumentStripVisibility() {
+        if (!sessionDocumentStrip || !sessionDocumentChips || !sessionDocumentStatus) return;
+        const hasDocuments = sessionDocumentChips.childElementCount > 0;
+        const hasStatus = !!sessionDocumentStatus.textContent;
+        sessionDocumentStrip.hidden = !hasDocuments && !hasStatus;
+        if (sessionDocumentHeader) {
+          sessionDocumentHeader.style.display = hasDocuments ? '' : 'none';
+        }
+        if (clearSessionDocumentsBtn) {
+          clearSessionDocumentsBtn.style.display = hasDocuments ? '' : 'none';
+        }
+      }
+
+      function setSessionDocumentStatus(message = '', isError = false) {
+        if (!sessionDocumentStatus) return;
+        if (sessionDocumentStatusTimer) {
+          clearTimeout(sessionDocumentStatusTimer);
+          sessionDocumentStatusTimer = null;
+        }
+        sessionDocumentStatus.textContent = message;
+        sessionDocumentStatus.classList.toggle('error', isError);
+        updateSessionDocumentStripVisibility();
+        if (message && isError) {
+          sessionDocumentStatusTimer = setTimeout(() => {
+            sessionDocumentStatus.textContent = '';
+            sessionDocumentStatus.classList.remove('error');
+            updateSessionDocumentStripVisibility();
+          }, 4500);
+        }
+      }
+
+      function renderSessionDocuments(documents = []) {
+        if (!sessionDocumentChips) return;
+        sessionDocumentChips.replaceChildren();
+        if (sessionDocumentCount) {
+          sessionDocumentCount.textContent = documents.length > 0
+            ? `Knowledge Sources (${documents.length})`
+            : '';
+        }
+
+        documents.forEach(documentSummary => {
+          const chip = document.createElement('div');
+          chip.className = 'session-document-chip';
+
+          const name = document.createElement('span');
+          name.className = 'session-document-name';
+          name.textContent = documentSummary.name;
+          name.title = documentSummary.name;
+
+          const status = document.createElement('span');
+          status.className = 'session-document-index-status';
+          status.textContent = documentSummary.status || 'Indexed';
+
+          const remove = document.createElement('button');
+          remove.className = 'session-document-remove';
+          remove.type = 'button';
+          remove.title = `Remove ${documentSummary.name}`;
+          remove.setAttribute('aria-label', `Remove ${documentSummary.name}`);
+          remove.textContent = '×';
+          remove.addEventListener('click', async () => {
+            remove.disabled = true;
+            try {
+              const result = await whysperAPI.removeSessionDocument(documentSummary.id);
+              renderSessionDocuments(result.documents || []);
+            } catch (error) {
+              console.error('Failed to remove session document:', error);
+              setSessionDocumentStatus('Could not remove file', true);
+              remove.disabled = false;
+            }
+          });
+
+          chip.append(name, status, remove);
+          sessionDocumentChips.appendChild(chip);
+        });
+
+        updateSessionDocumentStripVisibility();
+      }
+
+      async function loadSessionDocuments() {
+        try {
+          if (!whysperAPI || !whysperAPI.getSessionDocuments) return;
+          const documents = await whysperAPI.getSessionDocuments();
+          renderSessionDocuments(Array.isArray(documents) ? documents : []);
+        } catch (error) {
+          console.error('Failed to load session documents:', error);
+          setSessionDocumentStatus('Could not load files', true);
+        }
+      }
       
       // Listen for availability changes
       if (whysperAPI && whysperAPI.onSpeechAvailability) {
@@ -840,12 +1053,14 @@
       if (whysperAPI && whysperAPI.onSessionCleared) {
         whysperAPI.onSessionCleared(() => {
           clearChatHistory(true);
+          renderSessionDocuments([]);
         });
       }
 
       // Initialize availability and history
       loadHistory();
       initSpeechAvailability();
+      loadSessionDocuments();
 
       // Basic message function with markdown support for assistant messages
       function addMessage(text, type = 'user', skipPersist = false) {
@@ -1213,6 +1428,46 @@
       // UI Event Listeners
       if (clearHistoryBtn) {
         clearHistoryBtn.addEventListener('click', () => clearChatHistory());
+      }
+
+      if (addSessionDocumentsBtn) {
+        addSessionDocumentsBtn.addEventListener('click', async () => {
+          addSessionDocumentsBtn.disabled = true;
+          setSessionDocumentStatus('Processing...');
+          try {
+            const result = await whysperAPI.addSessionDocuments();
+            if (!result.canceled) {
+              renderSessionDocuments(result.documents || []);
+            }
+            if (result.errors && result.errors.length > 0) {
+              const count = result.errors.length;
+              setSessionDocumentStatus(`${count} file${count === 1 ? '' : 's'} could not be added`, true);
+            } else {
+              setSessionDocumentStatus('');
+            }
+          } catch (error) {
+            console.error('Failed to add session documents:', error);
+            setSessionDocumentStatus('Could not add files', true);
+          } finally {
+            addSessionDocumentsBtn.disabled = false;
+          }
+        });
+      }
+
+      if (clearSessionDocumentsBtn) {
+        clearSessionDocumentsBtn.addEventListener('click', async () => {
+          clearSessionDocumentsBtn.disabled = true;
+          try {
+            await whysperAPI.clearSessionDocuments();
+            renderSessionDocuments([]);
+            setSessionDocumentStatus('');
+          } catch (error) {
+            console.error('Failed to clear session documents:', error);
+            setSessionDocumentStatus('Could not clear files', true);
+          } finally {
+            clearSessionDocumentsBtn.disabled = false;
+          }
+        });
       }
 
       if (micButton) {
