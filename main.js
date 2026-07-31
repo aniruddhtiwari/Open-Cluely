@@ -80,6 +80,14 @@ const config = require("./src/core/config");
 const FirstRunManager = require("./src/core/first-run");
 const { promptLoader } = require("./prompt-loader");
 
+function resolveAvailablePromptId(items, savedId, preferredId) {
+  const availableIds = new Set(items.map(item => item.id));
+
+  if (savedId && availableIds.has(savedId)) return savedId;
+  if (availableIds.has(preferredId)) return preferredId;
+  return items.length > 0 ? items[0].id : null;
+}
+
 // ── Global crash guard ──
 // The speech path spawns external processes (Whisper CLI, and on macOS/Linux
 // the sox/rec/arecord recorders via node-record-lpcm16). A missing recorder
@@ -113,11 +121,17 @@ class ApplicationController {
   constructor() {
     this.isReady = false;
     this.starting = false;
-    this.activeSkill = "dsa";
-    this.activeProfile = "aniruddh";
-    this.codingLanguage = "python";
-  // Default to C++ so language is enforced from first run
-  this.codingLanguage = "python";
+    this.activeSkill = resolveAvailablePromptId(
+      promptLoader.getAvailableSkills(),
+      process.env.ACTIVE_SKILL,
+      "dsa"
+    );
+    this.activeProfile = resolveAvailablePromptId(
+      promptLoader.getAvailableProfiles(),
+      process.env.ACTIVE_PROFILE,
+      "aniruddh"
+    );
+    this.codingLanguage = process.env.CODING_LANGUAGE || "python";
     this.speechAvailable = false;
 
     // Utterance coalescing: VAD emits a transcript per natural pause, but a
@@ -1607,8 +1621,8 @@ class ApplicationController {
     // distinguish "unset" from "stale value from a previous load".
     return {
       codingLanguage: this.codingLanguage || "python",
-      activeSkill: this.activeSkill || "dsa",
-      activeProfile: this.activeProfile || "aniruddh",
+      activeSkill: this.activeSkill,
+      activeProfile: this.activeProfile,
       appIcon: this.appIcon || "terminal",
       selectedIcon: this.appIcon || "terminal",
       windowGap: windowManager.windowGap,
@@ -1641,17 +1655,25 @@ class ApplicationController {
         });
       }
       if (settings.activeSkill) {
-        this.activeSkill = settings.activeSkill;
+        this.activeSkill = resolveAvailablePromptId(
+          promptLoader.getAvailableSkills(),
+          settings.activeSkill,
+          "dsa"
+        );
         windowManager.broadcastToAllWindows("skill-updated", {
-          skill: settings.activeSkill,
+          skill: this.activeSkill,
         });
       }
       if (settings.activeProfile) {
-  	this.activeProfile = settings.activeProfile;
-  	windowManager.broadcastToAllWindows("profile-updated", {
-    	profile: settings.activeProfile,
- 	 });
-	}
+        this.activeProfile = resolveAvailablePromptId(
+          promptLoader.getAvailableProfiles(),
+          settings.activeProfile,
+          "aniruddh"
+        );
+        windowManager.broadcastToAllWindows("profile-updated", {
+          profile: this.activeProfile,
+        });
+      }
       if (settings.appIcon) {
         this.appIcon = settings.appIcon;
       }
@@ -1669,6 +1691,15 @@ class ApplicationController {
       // Writing to .env ensures they survive app restarts and are picked
       // up the next time the app boots.
       const envUpdates = {};
+      if (settings.codingLanguage) {
+        envUpdates.CODING_LANGUAGE = this.codingLanguage;
+      }
+      if (settings.activeSkill) {
+        envUpdates.ACTIVE_SKILL = this.activeSkill || "";
+      }
+      if (settings.activeProfile) {
+        envUpdates.ACTIVE_PROFILE = this.activeProfile || "";
+      }
       if (settings.speechProvider === "azure" || settings.speechProvider === "whisper") {
         envUpdates.SPEECH_PROVIDER = settings.speechProvider;
       }
