@@ -2,6 +2,7 @@ const { GoogleGenAI } = require('@google/genai');
 const logger = require('../core/logger').createServiceLogger('LLM');
 const config = require('../core/config');
 const { promptLoader } = require('../../prompt-loader');
+const promptBuilderService = require('./prompt-builder.service');
 
 class LLMService {
   constructor() {
@@ -302,7 +303,15 @@ class LLMService {
     return `Analyze this image for a ${activeSkill.toUpperCase()} question. Extract the problem concisely and provide the best possible solution with explanation and final code.${langNote}`;
   }
 
-  async processTextWithSkill(text, activeSkill, activeProfile, sessionMemory = [], programmingLanguage = null) {
+  async processTextWithSkill(
+    text,
+    activeSkill,
+    activeProfile,
+    sessionMemory = [],
+    programmingLanguage = null,
+    selectedChunks = [],
+    retrievalMetadata = {}
+  ) {
     if (!this.isInitialized) {
       throw new Error('LLM service not initialized. Check Gemini API key configuration.');
     }
@@ -310,6 +319,8 @@ class LLMService {
     const startTime = Date.now();
     this.requestCount++;
     
+    let knowledgeMetadata = this.createKnowledgeMetadata(null, retrievalMetadata);
+
     try {
       logger.info('Processing text with LLM', {
         activeSkill,
@@ -319,7 +330,20 @@ class LLMService {
         requestId: this.requestCount
       });
 
-      const geminiRequest = this.buildGeminiRequest(text, activeSkill, activeProfile,  sessionMemory, programmingLanguage);
+      const builtRequest = this.buildGeminiRequest(
+        text,
+        activeSkill,
+        activeProfile,
+        sessionMemory,
+        programmingLanguage,
+        selectedChunks
+      );
+      const geminiRequest = builtRequest.request;
+      knowledgeMetadata = this.createKnowledgeMetadata(
+        builtRequest.promptMetadata,
+        retrievalMetadata
+      );
+      this.logKnowledgePerformance(knowledgeMetadata);
 
       const preferAlternative = !!config.get('llm.gemini.enableFallbackMethod');
       let response;
@@ -369,7 +393,8 @@ class LLMService {
           programmingLanguage,
           processingTime: Date.now() - startTime,
           requestId: this.requestCount,
-          usedFallback: false
+          usedFallback: false,
+          ...knowledgeMetadata
         }
       };
     } catch (error) {
@@ -382,14 +407,28 @@ class LLMService {
       });
 
       if (config.get('llm.gemini.fallbackEnabled')) {
-        return this.generateFallbackResponse(text, activeSkill);
+        const fallbackResult = this.generateFallbackResponse(text, activeSkill);
+        fallbackResult.metadata = {
+          ...fallbackResult.metadata,
+          ...knowledgeMetadata
+        };
+        return fallbackResult;
       }
 
       throw error;
     }
   }
 
-  async processTextWithSkillStream(text, activeSkill, activeProfile, sessionMemory = [], programmingLanguage = null, onDelta = null) {
+  async processTextWithSkillStream(
+    text,
+    activeSkill,
+    activeProfile,
+    sessionMemory = [],
+    programmingLanguage = null,
+    onDelta = null,
+    selectedChunks = [],
+    retrievalMetadata = {}
+  ) {
     if (!this.isInitialized) {
       throw new Error('LLM service not initialized. Check Gemini API key configuration.');
     }
@@ -398,7 +437,20 @@ class LLMService {
     this.requestCount++;
 
     try {
-      const geminiRequest = this.buildGeminiRequest(text, activeSkill, activeProfile, sessionMemory, programmingLanguage);
+      const builtRequest = this.buildGeminiRequest(
+        text,
+        activeSkill,
+        activeProfile,
+        sessionMemory,
+        programmingLanguage,
+        selectedChunks
+      );
+      const geminiRequest = builtRequest.request;
+      const knowledgeMetadata = this.createKnowledgeMetadata(
+        builtRequest.promptMetadata,
+        retrievalMetadata
+      );
+      this.logKnowledgePerformance(knowledgeMetadata);
 
       const fullText = await this.executeStreamingRequest(geminiRequest, (delta) => {
         if (typeof onDelta === 'function' && delta) {
@@ -425,7 +477,8 @@ class LLMService {
           processingTime: Date.now() - startTime,
           requestId: this.requestCount,
           usedFallback: false,
-          streamed: true
+          streamed: true,
+          ...knowledgeMetadata
         }
       };
     } catch (error) {
@@ -433,7 +486,15 @@ class LLMService {
         error: error.message,
         requestId: this.requestCount
       });
-      return this.processTextWithSkill(text, activeSkill, activeProfile, sessionMemory, programmingLanguage);
+      return this.processTextWithSkill(
+        text,
+        activeSkill,
+        activeProfile,
+        sessionMemory,
+        programmingLanguage,
+        selectedChunks,
+        retrievalMetadata
+      );
     }
   }
 
@@ -553,23 +614,41 @@ class LLMService {
     }
   }
 
-  buildGeminiRequest(text, activeSkill, activeProfile, sessionMemory, programmingLanguage) {
+  buildGeminiRequest(
+    text,
+    activeSkill,
+    activeProfile,
+    sessionMemory,
+    programmingLanguage,
+    selectedChunks = []
+  ) {
     // Check if we have the new conversation history format
     const sessionManager = require('../managers/session.manager');
     
     if (sessionManager && typeof sessionManager.getConversationHistory === 'function') {
       const conversationHistory = sessionManager.getConversationHistory(15);
       const skillContext = sessionManager.getSkillContext(activeSkill, programmingLanguage);
-      return this.buildGeminiRequestWithHistory(text, activeSkill, activeProfile, conversationHistory, skillContext, programmingLanguage);
+      return this.buildGeminiRequestWithHistory(
+        text,
+        activeSkill,
+        activeProfile,
+        conversationHistory,
+        skillContext,
+        programmingLanguage,
+        selectedChunks
+      );
     }
 
-    // Fallback to old method for compatibility - now with programming language support
-    const requestComponents = promptLoader.getRequestComponents(
-      activeSkill, 
-      text, 
-      sessionMemory,
+    const combinedSystemPrompt = promptLoader.getCombinedPrompt(
+      activeSkill,
+      activeProfile,
       programmingLanguage
     );
+    const promptComponents = promptBuilderService.buildPromptComponents({
+      question: text,
+      combinedSystemPrompt,
+      selectedChunks
+    });
 
     const request = {
       contents: []
@@ -577,29 +656,29 @@ class LLMService {
 
     this.applyGenerationDefaults(request);
 
-    // Use the skill prompt that already has programming language injected
-    if (requestComponents.shouldUseModelMemory && requestComponents.skillPrompt) {
+    if (promptComponents.systemInstruction) {
       request.systemInstruction = {
-        parts: [{ text: requestComponents.skillPrompt }]
+        parts: [{ text: promptComponents.systemInstruction }]
       };
-      
-      logger.debug('Using language-enhanced system instruction for skill', {
-        skill: activeSkill,
-        programmingLanguage: programmingLanguage || 'not specified',
-        promptLength: requestComponents.skillPrompt.length,
-        requiresProgrammingLanguage: requestComponents.requiresProgrammingLanguage
-      });
     }
 
     request.contents.push({
       role: 'user',
-      parts: [{ text: this.formatUserMessage(text, activeSkill) }]
+      parts: [{ text: promptComponents.userMessage }]
     });
 
-    return request;
+    return { request, promptMetadata: promptComponents.metadata };
   }
 
-  buildGeminiRequestWithHistory(text, activeSkill, activeProfile, conversationHistory, skillContext, programmingLanguage) {
+  buildGeminiRequestWithHistory(
+    text,
+    activeSkill,
+    activeProfile,
+    conversationHistory,
+    skillContext,
+    programmingLanguage,
+    selectedChunks = []
+  ) {
     const request = {
       contents: []
     };
@@ -609,30 +688,34 @@ class LLMService {
     // Use the skill prompt from context (which may already include programming language)
     const { promptLoader } = require('../../prompt-loader');
 
-const combinedPrompt =
-  promptLoader.getCombinedPrompt(
-    activeSkill,
-    activeProfile,
-    programmingLanguage
-  ) || skillContext.skillPrompt || '';
+    const combinedPrompt = promptLoader.getCombinedPrompt(
+      activeSkill,
+      activeProfile,
+      programmingLanguage
+    ) || skillContext.skillPrompt || '';
+    const promptComponents = promptBuilderService.buildPromptComponents({
+      question: text,
+      combinedSystemPrompt: combinedPrompt,
+      selectedChunks
+    });
 
-if (combinedPrompt) {
-  request.systemInstruction = {
-    parts: [{ text: combinedPrompt }]
-  };
+    if (promptComponents.systemInstruction) {
+      request.systemInstruction = {
+        parts: [{ text: promptComponents.systemInstruction }]
+      };
 
-  logger.debug('Using combined skill and profile prompt as system instruction', {
-    skill: activeSkill,
-    profile: activeProfile,
-    programmingLanguage: programmingLanguage || 'not specified',
-    promptLength: combinedPrompt.length,
-    requiresProgrammingLanguage:
-      skillContext.requiresProgrammingLanguage || false,
-    hasLanguageInjection:
-      programmingLanguage &&
-      skillContext.requiresProgrammingLanguage
-  });
-}
+      logger.debug('Using combined skill and profile prompt as system instruction', {
+        skill: activeSkill,
+        profile: activeProfile,
+        programmingLanguage: programmingLanguage || 'not specified',
+        promptLength: promptComponents.systemInstruction.length,
+        requiresProgrammingLanguage:
+          skillContext.requiresProgrammingLanguage || false,
+        hasLanguageInjection:
+          programmingLanguage &&
+          skillContext.requiresProgrammingLanguage
+      });
+    }
 
     // Add conversation history (excluding system messages) with validation
     const conversationContents = conversationHistory
@@ -653,16 +736,14 @@ if (combinedPrompt) {
     // Add the conversation history
     request.contents.push(...conversationContents);
 
-    // Format and validate the current user input
-    const formattedMessage = this.formatUserMessage(text, activeSkill);
-    if (!formattedMessage || formattedMessage.trim().length === 0) {
+    if (!promptComponents.userMessage || promptComponents.userMessage.trim().length === 0) {
       throw new Error('Failed to format user message or message is empty');
     }
 
     // Add the current user input
     request.contents.push({
       role: 'user',
-      parts: [{ text: formattedMessage }]
+      parts: [{ text: promptComponents.userMessage }]
     });
 
     logger.debug('Built Gemini request with conversation history', {
@@ -674,7 +755,31 @@ if (combinedPrompt) {
       requiresProgrammingLanguage: skillContext.requiresProgrammingLanguage || false
     });
 
-    return request;
+    return { request, promptMetadata: promptComponents.metadata };
+  }
+
+  createKnowledgeMetadata(promptMetadata, retrievalMetadata = {}) {
+    return {
+      knowledgeUsed: !!(promptMetadata && promptMetadata.usedKnowledge),
+      retrievedChunkCount: promptMetadata ? promptMetadata.selectedChunkCount : 0,
+      retrievedDocumentCount: promptMetadata ? promptMetadata.selectedDocumentCount : 0,
+      retrievalElapsedMs: Number.isFinite(retrievalMetadata.retrievalElapsedMs)
+        ? retrievalMetadata.retrievalElapsedMs
+        : 0,
+      retrievalTotalChunks: Number.isInteger(retrievalMetadata.retrievalTotalChunks)
+        ? retrievalMetadata.retrievalTotalChunks
+        : 0,
+      knowledgeCharacters: promptMetadata ? promptMetadata.knowledgeCharacters : 0
+    };
+  }
+
+  logKnowledgePerformance(metadata) {
+    logger.debug('Knowledge retrieval and prompt preparation completed', {
+      retrievalElapsedMs: metadata.retrievalElapsedMs,
+      selectedChunkCount: metadata.retrievedChunkCount,
+      selectedDocumentCount: metadata.retrievedDocumentCount,
+      knowledgeCharacters: metadata.knowledgeCharacters
+    });
   }
 
   buildIntelligentTranscriptionRequest(text, activeSkill, sessionMemory, programmingLanguage) {

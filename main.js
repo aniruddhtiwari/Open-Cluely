@@ -115,6 +115,7 @@ process.on("unhandledRejection", (reason) => {
 const captureService = require("./src/services/capture.service");
 const speechService = require("./src/services/speech.service");
 const llmService = require("./src/services/llm.service");
+const knowledgeRetrievalService = require("./src/services/knowledge-retrieval.service");
 
 // Managers
 const windowManager = require("./src/managers/window.manager");
@@ -1242,6 +1243,9 @@ class ApplicationController {
       });
       windowManager.showLLMLoading();
 
+      const cachedDocumentChunks = sessionManager.getSessionDocumentChunks();
+      const retrieval = knowledgeRetrievalService.retrieve(text, cachedDocumentChunks);
+
       const llmResult = await llmService.processTextWithSkillStream(
         text,
         this.activeSkill,
@@ -1253,6 +1257,11 @@ class ApplicationController {
             messageId,
             delta
           });
+        },
+        retrieval.selectedChunks,
+        {
+          retrievalElapsedMs: retrieval.elapsedMs,
+          retrievalTotalChunks: retrieval.totalChunks
         }
       );
       llmResult.metadata = { ...llmResult.metadata, messageId };
