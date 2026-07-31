@@ -4,7 +4,7 @@ const { fileURLToPath } = require("url");
 const { app, BrowserWindow, dialog, globalShortcut, session, ipcMain } = require("electron");
 
 const MAX_SESSION_DOCUMENT_FILE_SIZE_BYTES = 10 * 1024 * 1024;
-const ALLOWED_SESSION_DOCUMENT_EXTENSIONS = new Set([".txt", ".md", ".markdown", ".docx", ".pdf"]);
+const ALLOWED_SESSION_DOCUMENT_EXTENSIONS = new Set([".txt", ".md", ".markdown", ".docx", ".pdf", ".pptx"]);
 
 // ── Resolve a stable .env location ──
 // In packaged builds process.cwd() is unstable and frequently read-only
@@ -1678,7 +1678,7 @@ class ApplicationController {
       title: "Add Session Documents",
       properties: ["openFile", "multiSelections"],
       filters: [
-        { name: "Session Documents", extensions: ["txt", "md", "markdown", "docx", "pdf"] }
+        { name: "Session Documents", extensions: ["txt", "md", "markdown", "docx", "pdf", "pptx"] }
       ]
     };
     const chatWindow = windowManager.getWindow("chat");
@@ -1699,10 +1699,11 @@ class ApplicationController {
       let sizeBytes = null;
       let extractedCharacters = null;
       let pageCount = null;
+      let slideCount = null;
 
       try {
         if (!ALLOWED_SESSION_DOCUMENT_EXTENSIONS.has(extension)) {
-          throw new Error("Unsupported file type. Select a TXT, Markdown, DOCX, or PDF file");
+          throw new Error("Unsupported file type. Select a TXT, Markdown, DOCX, PDF, or PPTX file");
         }
 
         let stats;
@@ -1740,6 +1741,7 @@ class ApplicationController {
         });
         extractedCharacters = extraction.content.length;
         pageCount = extraction.metadata.pageCount ?? null;
+        slideCount = extraction.metadata.slideCount ?? null;
 
         const summary = sessionManager.addSessionDocument({
           name,
@@ -1754,6 +1756,7 @@ class ApplicationController {
           sizeBytes,
           extractedCharacters,
           pageCount,
+          slideCount,
           result: "success"
         });
       } catch (error) {
@@ -1764,6 +1767,7 @@ class ApplicationController {
           sizeBytes,
           extractedCharacters,
           pageCount,
+          slideCount,
           result: "failure"
         });
       }
