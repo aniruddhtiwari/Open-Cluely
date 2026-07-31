@@ -1,4 +1,5 @@
 const mammoth = require('mammoth');
+const pdfParse = require('pdf-parse');
 
 const MAX_EXTRACTED_CONTENT_CHARACTERS = 2_000_000;
 const TEXT_EXTENSIONS = new Set(['.txt', '.md', '.markdown']);
@@ -27,9 +28,11 @@ class DocumentExtractionService {
       };
     }
 
-    if (normalizedExtension !== '.docx') {
-      throw new Error('Unsupported document type');
+    if (normalizedExtension === '.pdf') {
+      return this.extractPdf(buffer);
     }
+
+    if (normalizedExtension !== '.docx') throw new Error('Unsupported document type');
 
     let extracted;
     try {
@@ -56,6 +59,43 @@ class DocumentExtractionService {
       metadata: {
         extractor: 'mammoth-raw-text',
         originalCharacters: originalContent.length
+      }
+    };
+  }
+
+  async extractPdf(buffer) {
+    let extracted;
+    try {
+      extracted = await pdfParse(buffer);
+    } catch (error) {
+      const message = String(error && error.message || '').toLowerCase();
+      const hasEncryptionMarker = buffer.includes(Buffer.from('/Encrypt'));
+      if (hasEncryptionMarker || message.includes('password') || message.includes('encrypted')) {
+        throw new Error('PDF is encrypted or password-protected and cannot be parsed');
+      }
+      throw new Error('Unable to extract text from PDF; the file may be corrupt or unsupported');
+    }
+
+    const originalContent = typeof extracted.text === 'string' ? extracted.text : '';
+    const content = originalContent
+      .replace(/\r\n?/g, '\n')
+      .replace(/\0/g, '')
+      .replace(/\n[ \t]*\n(?:[ \t]*\n)+/g, '\n\n')
+      .trim();
+
+    if (!content) {
+      throw new Error('PDF contains no extractable text. OCR support is not enabled yet.');
+    }
+    if (content.length > MAX_EXTRACTED_CONTENT_CHARACTERS) {
+      throw new Error('Extracted content exceeds the 2,000,000-character safety limit');
+    }
+
+    return {
+      content,
+      metadata: {
+        extractor: 'pdf-parse',
+        originalCharacters: originalContent.length,
+        pageCount: Number.isInteger(extracted.numpages) ? extracted.numpages : null
       }
     };
   }
