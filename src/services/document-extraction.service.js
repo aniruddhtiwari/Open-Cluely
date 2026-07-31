@@ -2,6 +2,7 @@ const mammoth = require('mammoth');
 const pdfParse = require('pdf-parse');
 const JSZip = require('jszip');
 const { DOMParser } = require('@xmldom/xmldom');
+const { parse: parseCsv } = require('csv-parse/sync');
 const path = require('path');
 
 const MAX_EXTRACTED_CONTENT_CHARACTERS = 2_000_000;
@@ -37,6 +38,10 @@ class DocumentExtractionService {
 
     if (normalizedExtension === '.pptx') {
       return this.extractPptx(buffer);
+    }
+
+    if (normalizedExtension === '.csv') {
+      return this.extractCsv(buffer);
     }
 
     if (normalizedExtension !== '.docx') throw new Error('Unsupported document type');
@@ -253,6 +258,106 @@ class DocumentExtractionService {
     });
 
     return { title: titleParts.join('\n'), body: bodyParts.join('\n') };
+  }
+
+  extractCsv(buffer) {
+    const originalContent = buffer.toString('utf8');
+    const source = originalContent.replace(/\r\n?/g, '\n').replace(/\0/g, '');
+    if (!source.trim()) throw new Error('CSV is empty or contains no rows');
+
+    const delimiter = this.detectCsvDelimiter(source);
+    let records;
+    try {
+      records = parseCsv(source, {
+        bom: true,
+        delimiter: delimiter || ',',
+        relax_column_count: false
+      });
+    } catch (_) {
+      throw new Error('Unable to parse CSV; the file may be malformed or have inconsistent row widths');
+    }
+
+    if (!records.length) throw new Error('CSV is empty or contains no rows');
+    const columnCount = records[0].length;
+    if (!columnCount || records.some(record => record.length !== columnCount)) {
+      throw new Error('Unable to parse CSV; the file may be malformed or have inconsistent row widths');
+    }
+
+    const headersDetected = this.hasCsvHeader(records[0]);
+    const columns = headersDetected
+      ? records[0]
+      : Array.from({ length: columnCount }, (_, index) => `Column ${index + 1}`);
+    const rows = headersDetected ? records.slice(1) : records;
+    const sections = [
+      '[Table]',
+      '',
+      'Columns:',
+      columns.join(' | ')
+    ];
+
+    rows.forEach((row, rowIndex) => {
+      sections.push('', `[Row ${rowIndex + 1}]`);
+      columns.forEach((column, columnIndex) => {
+        sections.push(`${column}: ${row[columnIndex]}`);
+      });
+    });
+
+    const content = sections.join('\n')
+      .replace(/\r\n?/g, '\n')
+      .replace(/\0/g, '')
+      .replace(/\n[ \t]*\n(?:[ \t]*\n)+/g, '\n\n')
+      .trim();
+    if (content.length > MAX_EXTRACTED_CONTENT_CHARACTERS) {
+      throw new Error('Extracted content exceeds the 2,000,000-character safety limit');
+    }
+
+    return {
+      content,
+      metadata: {
+        extractor: 'csv-parse',
+        originalCharacters: originalContent.length,
+        rowCount: rows.length,
+        columnCount,
+        delimiter,
+        headersDetected
+      }
+    };
+  }
+
+  detectCsvDelimiter(source) {
+    const candidates = [',', ';', '\t', '|'];
+    const counts = new Map(candidates.map(candidate => [candidate, 0]));
+    let quoted = false;
+    for (let index = 0; index < source.length; index += 1) {
+      const character = source[index];
+      if (character === '"') {
+        if (quoted && source[index + 1] === '"') {
+          index += 1;
+        } else {
+          quoted = !quoted;
+        }
+      } else if (!quoted && character === '\n') {
+        break;
+      } else if (!quoted && counts.has(character)) {
+        counts.set(character, counts.get(character) + 1);
+      }
+    }
+    let detected = null;
+    let highestCount = 0;
+    candidates.forEach(candidate => {
+      if (counts.get(candidate) > highestCount) {
+        detected = candidate;
+        highestCount = counts.get(candidate);
+      }
+    });
+    return detected;
+  }
+
+  hasCsvHeader(firstRow) {
+    const values = firstRow.map(value => value.trim());
+    if (values.some(value => !value)) return false;
+    if (new Set(values).size !== values.length) return false;
+    return !values.every(value => /^[-+]?\d+(?:\.\d+)?$/.test(value));
   }
 }
 

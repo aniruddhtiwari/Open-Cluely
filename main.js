@@ -4,7 +4,7 @@ const { fileURLToPath } = require("url");
 const { app, BrowserWindow, dialog, globalShortcut, session, ipcMain } = require("electron");
 
 const MAX_SESSION_DOCUMENT_FILE_SIZE_BYTES = 10 * 1024 * 1024;
-const ALLOWED_SESSION_DOCUMENT_EXTENSIONS = new Set([".txt", ".md", ".markdown", ".docx", ".pdf", ".pptx"]);
+const ALLOWED_SESSION_DOCUMENT_EXTENSIONS = new Set([".txt", ".md", ".markdown", ".docx", ".pdf", ".pptx", ".csv"]);
 
 // ── Resolve a stable .env location ──
 // In packaged builds process.cwd() is unstable and frequently read-only
@@ -1678,7 +1678,7 @@ class ApplicationController {
       title: "Add Session Documents",
       properties: ["openFile", "multiSelections"],
       filters: [
-        { name: "Session Documents", extensions: ["txt", "md", "markdown", "docx", "pdf", "pptx"] }
+        { name: "Session Documents", extensions: ["txt", "md", "markdown", "docx", "pdf", "pptx", "csv"] }
       ]
     };
     const chatWindow = windowManager.getWindow("chat");
@@ -1700,10 +1700,12 @@ class ApplicationController {
       let extractedCharacters = null;
       let pageCount = null;
       let slideCount = null;
+      let rowCount = null;
+      let columnCount = null;
 
       try {
         if (!ALLOWED_SESSION_DOCUMENT_EXTENSIONS.has(extension)) {
-          throw new Error("Unsupported file type. Select a TXT, Markdown, DOCX, PDF, or PPTX file");
+          throw new Error("Unsupported file type. Select a TXT, Markdown, DOCX, PDF, PPTX, or CSV file");
         }
 
         let stats;
@@ -1742,6 +1744,8 @@ class ApplicationController {
         extractedCharacters = extraction.content.length;
         pageCount = extraction.metadata.pageCount ?? null;
         slideCount = extraction.metadata.slideCount ?? null;
+        rowCount = extraction.metadata.rowCount ?? null;
+        columnCount = extraction.metadata.columnCount ?? null;
 
         const summary = sessionManager.addSessionDocument({
           name,
@@ -1750,26 +1754,32 @@ class ApplicationController {
           content: extraction.content
         });
         added.push(summary);
-        logger.info("Session document added", {
+        const logDetails = {
           name,
           extension,
           sizeBytes,
           extractedCharacters,
-          pageCount,
-          slideCount,
           result: "success"
-        });
+        };
+        if (pageCount !== null) logDetails.pageCount = pageCount;
+        if (slideCount !== null) logDetails.slideCount = slideCount;
+        if (rowCount !== null) logDetails.rowCount = rowCount;
+        if (columnCount !== null) logDetails.columnCount = columnCount;
+        logger.info("Session document added", logDetails);
       } catch (error) {
         errors.push({ name, message: error.message });
-        logger.warn("Session document was not added", {
+        const logDetails = {
           name,
           extension,
           sizeBytes,
           extractedCharacters,
-          pageCount,
-          slideCount,
           result: "failure"
-        });
+        };
+        if (pageCount !== null) logDetails.pageCount = pageCount;
+        if (slideCount !== null) logDetails.slideCount = slideCount;
+        if (rowCount !== null) logDetails.rowCount = rowCount;
+        if (columnCount !== null) logDetails.columnCount = columnCount;
+        logger.warn("Session document was not added", logDetails);
       }
     }
 
