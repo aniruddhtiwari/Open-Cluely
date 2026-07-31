@@ -78,6 +78,7 @@ app.commandLine.appendSwitch("no-pings");
 const logger = require("./src/core/logger").createServiceLogger("MAIN");
 const config = require("./src/core/config");
 const FirstRunManager = require("./src/core/first-run");
+const { promptLoader } = require("./prompt-loader");
 
 // ── Global crash guard ──
 // The speech path spawns external processes (Whisper CLI, and on macOS/Linux
@@ -645,7 +646,6 @@ class ApplicationController {
 
     ipcMain.handle("get-skill-prompt", (event, skillName) => {
       try {
-        const { promptLoader } = require('./prompt-loader');
         const skillPrompt = promptLoader.getSkillPrompt(skillName);
         return skillPrompt;
       } catch (error) {
@@ -731,6 +731,13 @@ class ApplicationController {
 
     ipcMain.handle("get-settings", () => {
       return this.getSettings();
+    });
+
+    ipcMain.handle("get-available-prompt-options", () => {
+      return {
+        skills: promptLoader.getAvailableSkills(),
+        profiles: promptLoader.getAvailableProfiles()
+      };
     });
 
     // First-run onboarding status — renderer can query to know whether
