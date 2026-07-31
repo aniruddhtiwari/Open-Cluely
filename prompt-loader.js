@@ -8,7 +8,6 @@ class PromptLoader {
 	this.profiles = new Map();
 	this.profilesLoaded = false;
 	this.skillPromptSent = new Set();
-    // Focus only on DSA
     this.skillsRequiringProgrammingLanguage = ['dsa'];
   }
 
@@ -30,7 +29,6 @@ class PromptLoader {
       for (const file of files) {
         if (file.endsWith('.md')) {
           const skillName = path.basename(file, '.md');
-          if (skillName !== 'dsa') continue; // only keep DSA
           const filePath = path.join(promptsDir, file);
           const promptContent = fs.readFileSync(filePath, 'utf8');
           
@@ -370,6 +368,39 @@ STRICT REQUIREMENTS:
   }
 
   /**
+   * Get a display name from the first level-one heading or the file name
+   * @param {string} id - File name without the extension
+   * @param {string} content - Markdown file content
+   * @returns {string} Human-readable display name
+   */
+  getDisplayName(id, content) {
+    const heading = content.match(/^#\s+(.+?)\s*$/m);
+
+    if (heading) {
+      return heading[1].trim();
+    }
+
+    return id
+      .replace(/[-_]+/g, ' ')
+      .replace(/\b\w/g, character => character.toUpperCase());
+  }
+
+  /**
+   * Convert loaded Markdown entries into sorted availability metadata
+   * @param {Map<string, string>} entries - Loaded prompt or profile entries
+   * @returns {Array<{id: string, name: string}>} Sorted availability metadata
+   */
+  getAvailableItems(entries) {
+    return Array.from(entries, ([id, content]) => ({
+      id,
+      name: this.getDisplayName(id, content)
+    })).sort((first, second) =>
+      first.name.localeCompare(second.name, undefined, { sensitivity: 'base' }) ||
+      first.id.localeCompare(second.id, undefined, { sensitivity: 'base' })
+    );
+  }
+
+  /**
    * Normalize skill names to match file names
    * @param {string} skillName - Raw skill name
    * @returns {string} Normalized skill name
@@ -420,13 +451,24 @@ STRICT REQUIREMENTS:
 
   /**
    * Get list of available skills
-   * @returns {Array<string>} Array of available skill names
+   * @returns {Array<{id: string, name: string}>} Array of available skills
    */
   getAvailableSkills() {
     if (!this.promptsLoaded) {
       this.loadPrompts();
     }
-    return ['dsa'];
+    return this.getAvailableItems(this.prompts);
+  }
+
+  /**
+   * Get list of available profiles
+   * @returns {Array<{id: string, name: string}>} Array of available profiles
+   */
+  getAvailableProfiles() {
+    if (!this.profilesLoaded) {
+      this.loadProfiles();
+    }
+    return this.getAvailableItems(this.profiles);
   }
 
   /**
