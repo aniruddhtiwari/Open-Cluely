@@ -1,7 +1,10 @@
 const path = require("path");
 const fs = require("fs");
 const { fileURLToPath } = require("url");
-const { app, BrowserWindow, globalShortcut, session, ipcMain } = require("electron");
+const { app, BrowserWindow, dialog, globalShortcut, session, ipcMain } = require("electron");
+
+const MAX_SESSION_DOCUMENT_FILE_SIZE_BYTES = 10 * 1024 * 1024;
+const ALLOWED_SESSION_DOCUMENT_EXTENSIONS = new Set([".txt", ".md", ".markdown"]);
 
 // ── Resolve a stable .env location ──
 // In packaged builds process.cwd() is unstable and frequently read-only
@@ -622,6 +625,52 @@ class ApplicationController {
       sessionManager.clear();
       windowManager.broadcastToAllWindows("session-cleared");
       return { success: true };
+    });
+
+    ipcMain.handle("add-session-documents", async () => {
+      try {
+        return await this.addSessionDocuments();
+      } catch (error) {
+        logger.error("Failed to open session document picker", {
+          error: error.message
+        });
+        return {
+          canceled: false,
+          documents: sessionManager.getSessionDocumentSummaries(),
+          added: [],
+          errors: [{ name: "File picker", message: "Unable to open the file picker" }]
+        };
+      }
+    });
+
+    ipcMain.handle("get-session-documents", () => {
+      return sessionManager.getSessionDocumentSummaries();
+    });
+
+    ipcMain.handle("remove-session-document", (event, id) => {
+      if (typeof id !== "string" || !id.trim()) {
+        logger.warn("Rejected invalid session document removal request");
+        return {
+          success: false,
+          documents: sessionManager.getSessionDocumentSummaries()
+        };
+      }
+
+      const success = sessionManager.removeSessionDocument(id.trim());
+      logger.info("Session document removal requested", {
+        documentId: id.trim(),
+        success
+      });
+      return {
+        success,
+        documents: sessionManager.getSessionDocumentSummaries()
+      };
+    });
+
+    ipcMain.handle("clear-session-documents", () => {
+      const removedCount = sessionManager.clearSessionDocuments();
+      logger.info("Session documents cleared", { removedCount });
+      return { removedCount, documents: [] };
     });
 
     ipcMain.handle("force-always-on-top", () => {
@@ -1612,6 +1661,98 @@ class ApplicationController {
       });
     }
     return this._whisperInstaller;
+  }
+
+  async addSessionDocuments() {
+    const pickerOptions = {
+      title: "Add Session Documents",
+      properties: ["openFile", "multiSelections"],
+      filters: [
+        { name: "Text and Markdown", extensions: ["txt", "md", "markdown"] }
+      ]
+    };
+    const chatWindow = windowManager.getWindow("chat");
+    const result = chatWindow && !chatWindow.isDestroyed()
+      ? await dialog.showOpenDialog(chatWindow, pickerOptions)
+      : await dialog.showOpenDialog(pickerOptions);
+
+    if (result.canceled) {
+      return { canceled: true, documents: [], errors: [] };
+    }
+
+    const added = [];
+    const errors = [];
+
+    for (const filePath of result.filePaths) {
+      const name = path.basename(filePath);
+      const extension = path.extname(name).toLowerCase();
+      let sizeBytes = null;
+
+      try {
+        if (!ALLOWED_SESSION_DOCUMENT_EXTENSIONS.has(extension)) {
+          throw new Error("Unsupported file type. Select a TXT or Markdown file");
+        }
+
+        let stats;
+        try {
+          stats = await fs.promises.stat(filePath);
+        } catch (_) {
+          throw new Error("Unable to inspect file");
+        }
+
+        if (!stats.isFile()) {
+          throw new Error("Selected item is not a file");
+        }
+
+        sizeBytes = stats.size;
+        if (sizeBytes > MAX_SESSION_DOCUMENT_FILE_SIZE_BYTES) {
+          throw new Error("File exceeds the 10 MB safety limit");
+        }
+
+        let fileBuffer;
+        try {
+          fileBuffer = await fs.promises.readFile(filePath);
+        } catch (_) {
+          throw new Error("Unable to read file as UTF-8 text");
+        }
+
+        if (fileBuffer.length > MAX_SESSION_DOCUMENT_FILE_SIZE_BYTES) {
+          throw new Error("File exceeds the 10 MB safety limit");
+        }
+
+        sizeBytes = fileBuffer.length;
+        const content = fileBuffer.toString("utf8");
+
+        const summary = sessionManager.addSessionDocument({
+          name,
+          extension,
+          sizeBytes,
+          content
+        });
+        added.push(summary);
+        logger.info("Session document added", {
+          name,
+          extension,
+          sizeBytes,
+          documentId: summary.id
+        });
+      } catch (error) {
+        errors.push({ name, message: error.message });
+        logger.warn("Session document was not added", {
+          name,
+          extension,
+          sizeBytes,
+          message: error.message
+        });
+      }
+    }
+
+    return {
+      canceled: false,
+      documents: sessionManager.getSessionDocumentSummaries(),
+      added,
+      errors
+    };
   }
 
   getSettings() {
