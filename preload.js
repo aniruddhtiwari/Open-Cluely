@@ -40,6 +40,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   showSettings: () => ipcRenderer.invoke('show-settings'),
   hideSettings: () => ipcRenderer.invoke('hide-settings'),
   getSettings: () => ipcRenderer.invoke('get-settings'),
+  getAvailablePromptOptions: () => ipcRenderer.invoke('get-available-prompt-options'),
   saveSettings: (settings) => ipcRenderer.invoke('save-settings', settings),
 
   // First-run onboarding
