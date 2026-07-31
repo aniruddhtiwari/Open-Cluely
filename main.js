@@ -4,7 +4,7 @@ const { fileURLToPath } = require("url");
 const { app, BrowserWindow, dialog, globalShortcut, session, ipcMain } = require("electron");
 
 const MAX_SESSION_DOCUMENT_FILE_SIZE_BYTES = 10 * 1024 * 1024;
-const ALLOWED_SESSION_DOCUMENT_EXTENSIONS = new Set([".txt", ".md", ".markdown"]);
+const ALLOWED_SESSION_DOCUMENT_EXTENSIONS = new Set([".txt", ".md", ".markdown", ".docx"]);
 
 // ── Resolve a stable .env location ──
 // In packaged builds process.cwd() is unstable and frequently read-only
@@ -116,6 +116,7 @@ const captureService = require("./src/services/capture.service");
 const speechService = require("./src/services/speech.service");
 const llmService = require("./src/services/llm.service");
 const knowledgeRetrievalService = require("./src/services/knowledge-retrieval.service");
+const documentExtractionService = require("./src/services/document-extraction.service");
 
 // Managers
 const windowManager = require("./src/managers/window.manager");
@@ -1677,7 +1678,7 @@ class ApplicationController {
       title: "Add Session Documents",
       properties: ["openFile", "multiSelections"],
       filters: [
-        { name: "Text and Markdown", extensions: ["txt", "md", "markdown"] }
+        { name: "Session Documents", extensions: ["txt", "md", "markdown", "docx"] }
       ]
     };
     const chatWindow = windowManager.getWindow("chat");
@@ -1696,10 +1697,11 @@ class ApplicationController {
       const name = path.basename(filePath);
       const extension = path.extname(name).toLowerCase();
       let sizeBytes = null;
+      let extractedCharacters = null;
 
       try {
         if (!ALLOWED_SESSION_DOCUMENT_EXTENSIONS.has(extension)) {
-          throw new Error("Unsupported file type. Select a TXT or Markdown file");
+          throw new Error("Unsupported file type. Select a TXT, Markdown, or DOCX file");
         }
 
         let stats;
@@ -1722,7 +1724,7 @@ class ApplicationController {
         try {
           fileBuffer = await fs.promises.readFile(filePath);
         } catch (_) {
-          throw new Error("Unable to read file as UTF-8 text");
+          throw new Error("Unable to read file");
         }
 
         if (fileBuffer.length > MAX_SESSION_DOCUMENT_FILE_SIZE_BYTES) {
@@ -1730,20 +1732,26 @@ class ApplicationController {
         }
 
         sizeBytes = fileBuffer.length;
-        const content = fileBuffer.toString("utf8");
+        const extraction = await documentExtractionService.extractText({
+          fileName: name,
+          extension,
+          buffer: fileBuffer
+        });
+        extractedCharacters = extraction.content.length;
 
         const summary = sessionManager.addSessionDocument({
           name,
           extension,
           sizeBytes,
-          content
+          content: extraction.content
         });
         added.push(summary);
         logger.info("Session document added", {
           name,
           extension,
           sizeBytes,
-          documentId: summary.id
+          extractedCharacters,
+          result: "success"
         });
       } catch (error) {
         errors.push({ name, message: error.message });
@@ -1751,7 +1759,8 @@ class ApplicationController {
           name,
           extension,
           sizeBytes,
-          message: error.message
+          extractedCharacters,
+          result: "failure"
         });
       }
     }
