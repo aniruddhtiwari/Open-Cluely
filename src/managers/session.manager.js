@@ -1,6 +1,7 @@
 const logger = require('../core/logger').createServiceLogger('SESSION');
 const config = require('../core/config');
 const { promptLoader } = require('../../prompt-loader');
+const knowledgeRetrievalService = require('../services/knowledge-retrieval.service');
 
 const MAX_SESSION_DOCUMENT_CONTENT_CHARACTERS = 2000000;
 const SESSION_DOCUMENT_CHUNK_TARGET_CHARACTERS = 1500;
@@ -254,7 +255,18 @@ class SessionManager {
    */
   getSessionDocumentChunks() {
     return Array.from(this.sessionDocuments.values())
-      .flatMap(document => document.chunks.map(chunk => ({ ...chunk })));
+      .flatMap(document => document.chunks.map(chunk => ({
+        id: chunk.id,
+        documentId: chunk.documentId,
+        documentName: chunk.documentName,
+        index: chunk.index,
+        content: chunk.content,
+        normalizedContent: chunk.normalizedContent,
+        tokenFrequencies: { ...chunk.tokenFrequencies },
+        uniqueTokens: [...chunk.uniqueTokens],
+        normalizedDocumentName: chunk.normalizedDocumentName,
+        documentNameTokens: [...chunk.documentNameTokens]
+      })));
   }
 
   removeSessionDocument(id) {
@@ -327,12 +339,17 @@ class SessionManager {
       const chunkContent = content.slice(start, end).trim();
       if (chunkContent) {
         const index = chunks.length;
+        const retrievalData = knowledgeRetrievalService.prepareChunkRetrievalData(
+          chunkContent,
+          documentName
+        );
         chunks.push(Object.freeze({
           id: this.generateEventId(),
           documentId,
           documentName,
           index,
-          content: chunkContent
+          content: chunkContent,
+          ...retrievalData
         }));
       }
 
