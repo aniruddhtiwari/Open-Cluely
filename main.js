@@ -137,6 +137,7 @@ class ApplicationController {
     );
     this.codingLanguage = process.env.CODING_LANGUAGE || "";
     this.speechAvailable = false;
+    this.retrievalFollowUpContext = null;
 
     // Utterance coalescing: VAD emits a transcript per natural pause, but a
     // single spoken question can still arrive as a few fragments (mid-thought
@@ -624,6 +625,7 @@ class ApplicationController {
 
     ipcMain.handle("clear-session-memory", () => {
       sessionManager.clear();
+      this.retrievalFollowUpContext = null;
       windowManager.broadcastToAllWindows("session-cleared");
       return { success: true };
     });
@@ -686,6 +688,7 @@ class ApplicationController {
 
     ipcMain.handle("clear-session-documents", () => {
       const removedCount = sessionManager.clearSessionDocuments();
+      this.retrievalFollowUpContext = null;
       logger.info("Session documents cleared", { removedCount });
       return { removedCount, documents: [] };
     });
@@ -1070,6 +1073,7 @@ class ApplicationController {
   clearSessionMemory() {
     try {
       sessionManager.clear();
+      this.retrievalFollowUpContext = null;
       windowManager.broadcastToAllWindows("session-cleared");
       logger.info("Session memory cleared via global shortcut");
     } catch (error) {
@@ -1260,7 +1264,10 @@ class ApplicationController {
       windowManager.showLLMLoading();
 
       const cachedDocumentChunks = sessionManager.getSessionDocumentChunks();
-      const retrieval = knowledgeRetrievalService.retrieve(text, cachedDocumentChunks);
+      const retrieval = knowledgeRetrievalService.retrieve(text, cachedDocumentChunks, {
+        followUpContext: this.retrievalFollowUpContext
+      });
+      this.updateRetrievalFollowUpContext(text, retrieval, cachedDocumentChunks.length);
 
       const llmResult = await llmService.processTextWithSkillStream(
         text,
@@ -1686,6 +1693,29 @@ class ApplicationController {
       });
     }
     return this._whisperInstaller;
+  }
+
+  updateRetrievalFollowUpContext(query, retrieval, availableChunkCount) {
+    if (!availableChunkCount) {
+      this.retrievalFollowUpContext = null;
+      return;
+    }
+
+    if (!retrieval || !Array.isArray(retrieval.selectedChunks) || retrieval.selectedChunks.length === 0) {
+      if (!retrieval?.followUpUsed) this.retrievalFollowUpContext = null;
+      return;
+    }
+
+    const previousQuery = retrieval.followUpUsed && this.retrievalFollowUpContext
+      ? this.retrievalFollowUpContext.previousQuery
+      : query;
+    this.retrievalFollowUpContext = Object.freeze({
+      previousQuery,
+      selectedChunkIds: Object.freeze(retrieval.selectedChunks.map(chunk => chunk.id)),
+      selectedDocumentKeys: Object.freeze(retrieval.selectedChunks.map(chunk =>
+        chunk.documentId || chunk.documentName
+      ))
+    });
   }
 
   async addSessionDocuments() {

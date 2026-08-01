@@ -173,6 +173,12 @@ const DOMAIN_DOCUMENT_BOOST = 1.8;
 const PERSONAL_CONTENT_TERM_BOOST = 0.35;
 const PERSONAL_REFERENCE_PENALTY = 0.7;
 const SAME_DOCUMENT_SELECTION_FACTORS = Object.freeze([1, 0.9, 0.78]);
+const FOLLOW_UP_CHUNK_AFFINITY_BOOST = 0.45;
+const FOLLOW_UP_DOCUMENT_AFFINITY_BOOST = 0.25;
+const EXPLICIT_FOLLOW_UP_PATTERN = /\b(?:explain (?:that|this|it)|explain in more detail|tell me more|elaborate(?: on (?:that|this|it))?|go deeper|what about (?:that|this|it)|how so|what was (?:the )?outcome|what was your contribution|what tools did you use|what challenges did you face|how did you do (?:that|this|it)|can you (?:expand|elaborate)(?: on (?:that|this|it))?)\b/;
+const REFERENTIAL_TERM_PATTERN = /\b(?:that|this|it|those|there)\b/;
+const STRONG_STANDALONE_TOPIC_PATTERN = /\b(?:snowflake|databricks|dbt|azure|python|java|javascript|typescript|scd2|scd type 2|medallion|spark|pyspark|sql|oracle|kafka|airflow|data quality)\b/;
+const STANDALONE_ROLE_FIT_PATTERN = /\b(?:good fit for (?:this|the) role|experience match(?:es)? (?:this|the) role)\b/;
 
 class KnowledgeRetrievalService {
   normalizeText(text) {
@@ -237,10 +243,12 @@ class KnowledgeRetrievalService {
     const minimumScore = Number.isFinite(options.minimumScore) && options.minimumScore > 0
       ? options.minimumScore
       : DEFAULT_OPTIONS.minimumScore;
-    const normalizedQuery = this.normalizeText(queryText);
+    const retrievalPlan = this.createRetrievalPlan(queryText, options.followUpContext);
+    const normalizedQuery = this.normalizeText(retrievalPlan.retrievalQuery);
     const queryTokens = this.expandQueryTokens(
       normalizedQuery,
-      this.tokenizeNormalizedText(normalizedQuery)
+      this.tokenizeNormalizedText(normalizedQuery),
+      !retrievalPlan.isFollowUp
     );
     const queryContext = Object.freeze({
       isPersonalExperience: PERSONAL_QUERY_PATTERNS.some(pattern => pattern.test(normalizedQuery)),
@@ -267,8 +275,9 @@ class KnowledgeRetrievalService {
         uniqueQueryTokens,
         queryContext
       );
-      if (scored.score >= minimumScore) {
-        scoredChunks.push({ chunk, score: scored.score, originalPosition });
+      const score = this.applyFollowUpAffinity(scored.score, chunk, retrievalPlan);
+      if (score >= minimumScore) {
+        scoredChunks.push({ chunk, score, originalPosition });
       }
     });
 
@@ -321,15 +330,68 @@ class KnowledgeRetrievalService {
       sourceChunks.length,
       matchedChunks,
       selectedChunks,
-      totalSelectedCharacters
+      totalSelectedCharacters,
+      retrievalPlan.isFollowUp
     );
   }
 
-  expandQueryTokens(normalizedQuery, queryTokens) {
+  createRetrievalPlan(query, followUpContext) {
+    const queryText = typeof query === 'string' ? query : '';
+    const previousQuery = followUpContext && typeof followUpContext.previousQuery === 'string'
+      ? followUpContext.previousQuery.trim()
+      : '';
+    const isFollowUp = !!previousQuery && this.isAmbiguousFollowUp(queryText);
+    const selectedChunkIds = new Set(
+      isFollowUp && Array.isArray(followUpContext.selectedChunkIds)
+        ? followUpContext.selectedChunkIds.filter(id => typeof id === 'string' && id)
+        : []
+    );
+    const selectedDocumentKeys = new Set(
+      isFollowUp && Array.isArray(followUpContext.selectedDocumentKeys)
+        ? followUpContext.selectedDocumentKeys.filter(key => typeof key === 'string' && key)
+        : []
+    );
+
+    return {
+      isFollowUp,
+      retrievalQuery: isFollowUp ? `${previousQuery} ${queryText}` : queryText,
+      selectedChunkIds,
+      selectedDocumentKeys
+    };
+  }
+
+  isAmbiguousFollowUp(query) {
+    const normalizedQuery = this.normalizeText(query);
+    if (
+      !normalizedQuery ||
+      STRONG_STANDALONE_TOPIC_PATTERN.test(normalizedQuery) ||
+      STANDALONE_ROLE_FIT_PATTERN.test(normalizedQuery)
+    ) return false;
+    if (normalizedQuery === 'why') return true;
+    if (EXPLICIT_FOLLOW_UP_PATTERN.test(normalizedQuery)) return true;
+    const tokenCount = this.tokenizeNormalizedText(normalizedQuery).length;
+    return tokenCount <= 6 && REFERENTIAL_TERM_PATTERN.test(normalizedQuery);
+  }
+
+  applyFollowUpAffinity(score, chunk, retrievalPlan) {
+    if (!retrievalPlan.isFollowUp) return score;
+    if (retrievalPlan.selectedChunkIds.has(chunk.id)) {
+      return score + FOLLOW_UP_CHUNK_AFFINITY_BOOST;
+    }
+    if (retrievalPlan.selectedDocumentKeys.has(this.getDocumentKey(chunk))) {
+      return score + FOLLOW_UP_DOCUMENT_AFFINITY_BOOST;
+    }
+    return score;
+  }
+
+  expandQueryTokens(normalizedQuery, queryTokens, includeSynonyms = true) {
     const expandedTokens = [...queryTokens];
     const seenTokens = new Set(queryTokens);
+    const expansions = includeSynonyms
+      ? [...QUERY_INTENT_EXPANSIONS, ...QUERY_SYNONYMS]
+      : QUERY_INTENT_EXPANSIONS;
 
-    for (const expansion of [...QUERY_INTENT_EXPANSIONS, ...QUERY_SYNONYMS]) {
+    for (const expansion of expansions) {
       if (!expansion.patterns.some(pattern => pattern.test(normalizedQuery))) continue;
 
       for (const term of expansion.terms) {
@@ -448,7 +510,8 @@ class KnowledgeRetrievalService {
     totalChunks,
     matchedChunks,
     selectedChunks,
-    totalSelectedCharacters
+    totalSelectedCharacters,
+    followUpUsed = false
   ) {
     return {
       query,
@@ -456,7 +519,8 @@ class KnowledgeRetrievalService {
       totalChunks,
       matchedChunks,
       selectedChunks,
-      totalSelectedCharacters
+      totalSelectedCharacters,
+      followUpUsed
     };
   }
 }
