@@ -475,6 +475,8 @@
         let isInteractive = false;
         let scrollableElements = [];
         let initialized = false;
+        const streamingResponses = new Map();
+        const acknowledgedStreams = new Set();
         
         // Immediate logging to verify script execution
         console.log('[LLM-RESPONSE] Script tag executed');
@@ -531,6 +533,35 @@
                 window.electronAPI.onShowLoading(() => {
                     console.log('[LLM-RESPONSE] show-loading received');
                     showLoadingState();
+                });
+
+                window.electronAPI.onTranscriptionLlmResponseStart((event, data) => {
+                    if (!data || !data.messageId) return;
+                    streamingResponses.set(data.messageId, '');
+                    showLoadingState();
+                });
+
+                window.electronAPI.onTranscriptionLlmResponseChunk((event, data) => {
+                    if (!data || !data.messageId || typeof data.delta !== 'string') return;
+                    const accumulated = (streamingResponses.get(data.messageId) || '') + data.delta;
+                    streamingResponses.set(data.messageId, accumulated);
+                    if (!accumulated) return;
+                    hideLoadingState();
+                    displayResponse({ content: accumulated }, { streaming: true });
+                    if (!acknowledgedStreams.has(data.messageId)) {
+                        acknowledgedStreams.add(data.messageId);
+                        requestAnimationFrame(() => {
+                            window.electronAPI.acknowledgeResponseRender(data.messageId, 'aiResponse');
+                        });
+                    }
+                });
+
+                window.electronAPI.onTranscriptionLlmResponse((event, data) => {
+                    const messageId = data?.messageId || data?.metadata?.messageId;
+                    if (!messageId || !data?.response || !streamingResponses.has(messageId)) return;
+                    streamingResponses.delete(messageId);
+                    displayResponse({ content: data.response });
+                    setupScrolling();
                 });
                 
                 // Listen for LLM response
@@ -640,7 +671,7 @@
             };
         }
 
-        function displayResponse(data) {
+        function displayResponse(data, options = {}) {
             // Show content
             const responseElement = document.getElementById('response-content');
             
@@ -676,7 +707,7 @@
             }
             
             // Request dynamic window sizing based on content
-            setTimeout(() => {
+            if (!options.streaming) setTimeout(() => {
                 window.electronAPI.resizeLlmWindowForContent(contentMetrics)
                     .then(result => {
                     })

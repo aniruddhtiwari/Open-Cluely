@@ -27,6 +27,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getSessionHistory: () => ipcRenderer.invoke('get-session-history'),
   getLLMSessionHistory: () => ipcRenderer.invoke('get-llm-session-history'),
   clearSessionMemory: () => ipcRenderer.invoke('clear-session-memory'),
+  clearSessionTelemetry: () => ipcRenderer.invoke('clear-session-telemetry'),
+  exportSessionTranscript: () => ipcRenderer.invoke('export-session-transcript'),
+  acknowledgeResponseRender: (messageId, target) =>
+    ipcRenderer.invoke('acknowledge-response-render', { messageId, target }),
   formatSessionHistory: () => ipcRenderer.invoke('format-session-history'),
   sendChatMessage: (text) => ipcRenderer.invoke('send-chat-message', text),
   getSkillPrompt: (skillName) => ipcRenderer.invoke('get-skill-prompt', skillName),

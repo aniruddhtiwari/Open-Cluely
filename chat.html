@@ -824,6 +824,9 @@
           <div class="recording-indicator" id="recordingIndicator"></div>
         </div>
         <div class="header-actions">
+          <button class="icon-button" id="saveTranscriptBtn" title="Save session transcript">
+            <i class="fas fa-download"></i>
+          </button>
           <button class="icon-button" id="clearHistoryBtn" title="Clear chat history">
             <i class="fas fa-trash"></i>
           </button>
@@ -897,6 +900,7 @@
       const listeningDuration = document.getElementById('listeningDuration');
       const interimOverlay = document.getElementById('interimOverlay');
       const clearHistoryBtn = document.getElementById('clearHistoryBtn');
+      const saveTranscriptBtn = document.getElementById('saveTranscriptBtn');
       const sessionDocumentStrip = document.getElementById('sessionDocumentStrip');
       const sessionDocumentHeader = document.getElementById('sessionDocumentHeader');
       const sessionDocumentCount = document.getElementById('sessionDocumentCount');
@@ -1534,8 +1538,14 @@
         const stream = streamingResponses.get(messageId);
         if (!stream) return;
         const wasNearBottom = isNearMessagesBottom();
+        const isFirstChunk = stream.text.length === 0 && delta.length > 0;
         stream.text += delta;
         renderAssistantText(stream.textDiv, stream.text);
+        if (isFirstChunk && whysperAPI && whysperAPI.acknowledgeResponseRender) {
+          requestAnimationFrame(() => {
+            whysperAPI.acknowledgeResponseRender(messageId, 'chat');
+          });
+        }
         scrollMessagesIfNearBottom(wasNearBottom);
       }
 
@@ -1664,7 +1674,35 @@
 
       // UI Event Listeners
       if (clearHistoryBtn) {
-        clearHistoryBtn.addEventListener('click', () => clearChatHistory());
+        clearHistoryBtn.addEventListener('click', async () => {
+          const ok = confirm('Clear chat history?');
+          if (!ok) return;
+          clearChatHistory(true);
+          try {
+            if (whysperAPI && whysperAPI.clearSessionTelemetry) {
+              await whysperAPI.clearSessionTelemetry();
+            }
+          } catch (error) {
+            console.error('Failed to clear session telemetry:', error);
+          }
+        });
+      }
+
+      if (saveTranscriptBtn) {
+        saveTranscriptBtn.addEventListener('click', async () => {
+          saveTranscriptBtn.disabled = true;
+          try {
+            const result = await whysperAPI.exportSessionTranscript();
+            if (result && !result.canceled && !result.success) {
+              addMessage(result.message || 'Could not save transcript', 'error');
+            }
+          } catch (error) {
+            console.error('Failed to export session transcript:', error);
+            addMessage('Could not save transcript', 'error');
+          } finally {
+            saveTranscriptBtn.disabled = false;
+          }
+        });
       }
 
       if (addSessionDocumentsBtn) {
