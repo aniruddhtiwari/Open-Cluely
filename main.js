@@ -4,7 +4,7 @@ const { fileURLToPath } = require("url");
 const { app, BrowserWindow, dialog, globalShortcut, session, ipcMain } = require("electron");
 
 const MAX_SESSION_DOCUMENT_FILE_SIZE_BYTES = 10 * 1024 * 1024;
-const ALLOWED_SESSION_DOCUMENT_EXTENSIONS = new Set([".txt", ".md", ".markdown", ".docx", ".pdf", ".pptx", ".csv"]);
+const ALLOWED_SESSION_DOCUMENT_EXTENSIONS = new Set([".txt", ".md", ".markdown", ".docx", ".pdf", ".pptx", ".csv", ".xlsx", ".xls"]);
 
 // ── Resolve a stable .env location ──
 // In packaged builds process.cwd() is unstable and frequently read-only
@@ -1678,7 +1678,7 @@ class ApplicationController {
       title: "Add Session Documents",
       properties: ["openFile", "multiSelections"],
       filters: [
-        { name: "Session Documents", extensions: ["txt", "md", "markdown", "docx", "pdf", "pptx", "csv"] }
+        { name: "Session Documents", extensions: ["txt", "md", "markdown", "docx", "pdf", "pptx", "csv", "xlsx", "xls"] }
       ]
     };
     const chatWindow = windowManager.getWindow("chat");
@@ -1702,10 +1702,12 @@ class ApplicationController {
       let slideCount = null;
       let rowCount = null;
       let columnCount = null;
+      let sheetCount = null;
+      let visibleSheetCount = null;
 
       try {
         if (!ALLOWED_SESSION_DOCUMENT_EXTENSIONS.has(extension)) {
-          throw new Error("Unsupported file type. Select a TXT, Markdown, DOCX, PDF, PPTX, or CSV file");
+          throw new Error("Unsupported file type. Select a TXT, Markdown, DOCX, PDF, PPTX, CSV, XLSX, or XLS file");
         }
 
         let stats;
@@ -1746,6 +1748,8 @@ class ApplicationController {
         slideCount = extraction.metadata.slideCount ?? null;
         rowCount = extraction.metadata.rowCount ?? null;
         columnCount = extraction.metadata.columnCount ?? null;
+        sheetCount = extraction.metadata.sheetCount ?? null;
+        visibleSheetCount = extraction.metadata.visibleSheetCount ?? null;
 
         const summary = sessionManager.addSessionDocument({
           name,
@@ -1765,6 +1769,8 @@ class ApplicationController {
         if (slideCount !== null) logDetails.slideCount = slideCount;
         if (rowCount !== null) logDetails.rowCount = rowCount;
         if (columnCount !== null) logDetails.columnCount = columnCount;
+        if (sheetCount !== null) logDetails.sheetCount = sheetCount;
+        if (visibleSheetCount !== null) logDetails.visibleSheetCount = visibleSheetCount;
         logger.info("Session document added", logDetails);
       } catch (error) {
         errors.push({ name, message: error.message });
@@ -1779,6 +1785,8 @@ class ApplicationController {
         if (slideCount !== null) logDetails.slideCount = slideCount;
         if (rowCount !== null) logDetails.rowCount = rowCount;
         if (columnCount !== null) logDetails.columnCount = columnCount;
+        if (sheetCount !== null) logDetails.sheetCount = sheetCount;
+        if (visibleSheetCount !== null) logDetails.visibleSheetCount = visibleSheetCount;
         logger.warn("Session document was not added", logDetails);
       }
     }

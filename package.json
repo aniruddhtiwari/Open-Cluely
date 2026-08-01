@@ -44,7 +44,8 @@
     "pdf-parse": "^1.1.1",
     "prismjs": "^1.30.0",
     "winston": "^3.17.0",
-    "winston-daily-rotate-file": "^4.7.1"
+    "winston-daily-rotate-file": "^4.7.1",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "electron": "^29.1.0",

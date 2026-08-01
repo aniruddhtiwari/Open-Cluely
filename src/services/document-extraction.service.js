@@ -3,6 +3,7 @@ const pdfParse = require('pdf-parse');
 const JSZip = require('jszip');
 const { DOMParser } = require('@xmldom/xmldom');
 const { parse: parseCsv } = require('csv-parse/sync');
+const XLSX = require('xlsx');
 const path = require('path');
 
 const MAX_EXTRACTED_CONTENT_CHARACTERS = 2_000_000;
@@ -42,6 +43,10 @@ class DocumentExtractionService {
 
     if (normalizedExtension === '.csv') {
       return this.extractCsv(buffer);
+    }
+
+    if (normalizedExtension === '.xlsx' || normalizedExtension === '.xls') {
+      return this.extractWorkbook(buffer, normalizedExtension);
     }
 
     if (normalizedExtension !== '.docx') throw new Error('Unsupported document type');
@@ -283,26 +288,8 @@ class DocumentExtractionService {
       throw new Error('Unable to parse CSV; the file may be malformed or have inconsistent row widths');
     }
 
-    const headersDetected = this.hasCsvHeader(records[0]);
-    const columns = headersDetected
-      ? records[0]
-      : Array.from({ length: columnCount }, (_, index) => `Column ${index + 1}`);
-    const rows = headersDetected ? records.slice(1) : records;
-    const sections = [
-      '[Table]',
-      '',
-      'Columns:',
-      columns.join(' | ')
-    ];
-
-    rows.forEach((row, rowIndex) => {
-      sections.push('', `[Row ${rowIndex + 1}]`);
-      columns.forEach((column, columnIndex) => {
-        sections.push(`${column}: ${row[columnIndex]}`);
-      });
-    });
-
-    const content = sections.join('\n')
+    const formatted = this.formatRetrievalTable(records, '[Table]');
+    const content = formatted.content
       .replace(/\r\n?/g, '\n')
       .replace(/\0/g, '')
       .replace(/\n[ \t]*\n(?:[ \t]*\n)+/g, '\n\n')
@@ -316,11 +303,128 @@ class DocumentExtractionService {
       metadata: {
         extractor: 'csv-parse',
         originalCharacters: originalContent.length,
-        rowCount: rows.length,
+        rowCount: formatted.rowCount,
         columnCount,
         delimiter,
-        headersDetected
+        headersDetected: formatted.headersDetected
       }
+    };
+  }
+
+  extractWorkbook(buffer, extension) {
+    const isZipPackage = buffer.length >= 4 &&
+      buffer[0] === 0x50 && buffer[1] === 0x4b &&
+      ((buffer[2] === 0x03 && buffer[3] === 0x04) ||
+       (buffer[2] === 0x05 && buffer[3] === 0x06) ||
+       (buffer[2] === 0x07 && buffer[3] === 0x08));
+    const oleSignature = Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]);
+    const isOleWorkbook = buffer.length >= oleSignature.length &&
+      buffer.subarray(0, oleSignature.length).equals(oleSignature);
+    if (extension === '.xlsx' && isOleWorkbook) {
+      throw new Error('Workbook is encrypted or password-protected and cannot be parsed');
+    }
+    if ((extension === '.xlsx' && !isZipPackage) || (extension === '.xls' && !isOleWorkbook)) {
+      throw new Error('Unable to extract workbook data; the file may be corrupt or unsupported');
+    }
+
+    let workbook;
+    try {
+      workbook = XLSX.read(buffer, {
+        type: 'buffer',
+        cellFormula: false,
+        cellText: true,
+        cellDates: false,
+        bookFiles: false,
+        bookVBA: false
+      });
+    } catch (error) {
+      const message = String(error && error.message || '').toLowerCase();
+      if (message.includes('password') || message.includes('encrypt')) {
+        throw new Error('Workbook is encrypted or password-protected and cannot be parsed');
+      }
+      throw new Error('Unable to extract workbook data; the file may be corrupt or unsupported');
+    }
+
+    const sheetNames = Array.isArray(workbook.SheetNames) ? workbook.SheetNames : [];
+    const sheetVisibility = new Map(
+      ((workbook.Workbook && workbook.Workbook.Sheets) || [])
+        .map(sheet => [sheet.name || sheet.Name, sheet.Hidden || 0])
+    );
+    const visibleSheetNames = sheetNames.filter(name => (sheetVisibility.get(name) || 0) === 0);
+    const sections = [];
+    let rowCount = 0;
+    let columnCount = 0;
+
+    visibleSheetNames.forEach(name => {
+      const worksheet = workbook.Sheets[name];
+      if (!worksheet || !worksheet['!ref']) return;
+      const rawRows = XLSX.utils.sheet_to_json(worksheet, {
+        header: 1,
+        raw: false,
+        defval: '',
+        blankrows: false
+      });
+      const readableRows = rawRows
+        .map(row => row.map(value => value == null ? '' : String(value)))
+        .filter(row => row.some(value => value.trim() !== ''));
+      if (!readableRows.length) return;
+
+      const width = Math.max(...readableRows.map(row => row.length));
+      const normalizedRows = readableRows.map(row =>
+        Array.from({ length: width }, (_, index) => row[index] || '')
+      );
+      const formatted = this.formatRetrievalTable(normalizedRows, `[Worksheet: ${name}]`);
+      sections.push(formatted.content);
+      rowCount += formatted.rowCount;
+      columnCount = Math.max(columnCount, formatted.columnCount);
+    });
+
+    if (!sections.length) throw new Error('Workbook contains no readable worksheet data.');
+
+    const originalContent = sections.join('\n\n');
+    const content = originalContent
+      .replace(/\r\n?/g, '\n')
+      .replace(/\0/g, '')
+      .replace(/\n[ \t]*\n(?:[ \t]*\n)+/g, '\n\n')
+      .trim();
+    if (content.length > MAX_EXTRACTED_CONTENT_CHARACTERS) {
+      throw new Error('Extracted content exceeds the 2,000,000-character safety limit');
+    }
+
+    return {
+      content,
+      metadata: {
+        extractor: 'sheetjs',
+        originalCharacters: originalContent.length,
+        sheetCount: sheetNames.length,
+        rowCount,
+        columnCount,
+        visibleSheetCount: visibleSheetNames.length
+      }
+    };
+  }
+
+  formatRetrievalTable(records, heading) {
+    const columnCount = records[0].length;
+    const headersDetected = this.hasTableHeader(records[0]);
+    const columns = headersDetected
+      ? records[0]
+      : Array.from({ length: columnCount }, (_, index) => `Column ${index + 1}`);
+    const rows = headersDetected ? records.slice(1) : records;
+    const sections = [heading, '', 'Columns:', columns.join(' | ')];
+
+    rows.forEach((row, rowIndex) => {
+      sections.push('', `[Row ${rowIndex + 1}]`);
+      columns.forEach((column, columnIndex) => {
+        sections.push(`${column}: ${row[columnIndex]}`);
+      });
+    });
+
+    return {
+      content: sections.join('\n'),
+      rowCount: rows.length,
+      columnCount,
+      headersDetected
     };
   }
 
@@ -353,7 +457,7 @@ class DocumentExtractionService {
     return detected;
   }
 
-  hasCsvHeader(firstRow) {
+  hasTableHeader(firstRow) {
     const values = firstRow.map(value => value.trim());
     if (values.some(value => !value)) return false;
     if (new Set(values).size !== values.length) return false;
