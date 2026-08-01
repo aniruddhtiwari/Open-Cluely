@@ -633,11 +633,10 @@ class LLMService {
     programmingLanguage,
     selectedChunks = []
   ) {
-    // Check if we have the new conversation history format
     const sessionManager = require('../managers/session.manager');
-    
-    if (sessionManager && typeof sessionManager.getConversationHistory === 'function') {
-      const conversationHistory = sessionManager.getConversationHistory(15);
+
+    if (Array.isArray(sessionMemory)) {
+      const conversationHistory = sessionMemory.slice(-15);
       const skillContext = sessionManager.getSkillContext(activeSkill, programmingLanguage);
       return this.buildGeminiRequestWithHistory(
         text,
@@ -800,11 +799,10 @@ class LLMService {
       throw new Error('Empty or invalid transcription text provided to buildIntelligentTranscriptionRequest');
     }
 
-    // Check if we have the new conversation history format
     const sessionManager = require('../managers/session.manager');
-    
-    if (sessionManager && typeof sessionManager.getConversationHistory === 'function') {
-      const conversationHistory = sessionManager.getConversationHistory(10);
+
+    if (Array.isArray(sessionMemory)) {
+      const conversationHistory = sessionMemory.slice(-10);
       const skillContext = sessionManager.getSkillContext(activeSkill, programmingLanguage);
       return this.buildIntelligentTranscriptionRequestWithHistory(cleanText, activeSkill, conversationHistory, skillContext, programmingLanguage);
     }
@@ -839,7 +837,7 @@ class LLMService {
     return request;
   }
 
-  buildIntelligentTranscriptionRequestWithHistory(text, activeSkill, activeProfile, conversationHistory, skillContext, programmingLanguage) {
+  buildIntelligentTranscriptionRequestWithHistory(text, activeSkill, conversationHistory, skillContext, programmingLanguage) {
     const request = {
       contents: []
     };

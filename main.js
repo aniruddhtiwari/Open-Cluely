@@ -704,17 +704,17 @@ class ApplicationController {
     });
 
     ipcMain.handle("send-chat-message", async (event, text) => {
-      // Add chat message to session memory
-      sessionManager.addUserInput(text, 'chat');
-      logger.debug('Chat message added to session memory', { textLength: text.length });
-
       // Typed messages need the full skill pipeline (with history context),
       // NOT the voice "intelligent filter" pipeline. Voice keeps its filter
       // behaviour; typed chat goes through processWithLLM so it gets real
       // answers using the active skill prompt and recent conversation history.
       (async () => {
         try {
-          const sessionHistory = sessionManager.getOptimizedHistory();
+          // Capture only completed prior turns. processWithLLM stores this
+          // question before its matching model response is added.
+          const sessionHistory = {
+            recent: sessionManager.getConversationHistory(15)
+          };
           await this.processWithLLM(text, sessionHistory);
         } catch (error) {
           logger.error("Failed to process chat message with LLM", {
@@ -1346,7 +1346,6 @@ class ApplicationController {
     }
 
     // Route speech UI events according to the user's response-target setting.
-    sessionManager.addUserInput(fragment, 'speech');
     this.sendToVoiceResponseWindows("transcription-received", { text: fragment });
 
     this._utteranceBuffer = this._utteranceBuffer
@@ -1388,7 +1387,9 @@ class ApplicationController {
     this._utteranceDispatchInFlight = true;
 
     try {
-      const sessionHistory = sessionManager.getOptimizedHistory();
+      const sessionHistory = {
+        recent: sessionManager.getConversationHistory(10)
+      };
       await this.processTranscriptionWithLLM(combined, sessionHistory);
     } catch (error) {
       logger.error("Failed to process transcription with LLM", {
@@ -1426,6 +1427,8 @@ class ApplicationController {
         });
         return;
       }
+
+      sessionManager.addUserInput(cleanText, 'speech');
 
       logger.info("Processing transcription with intelligent LLM response", {
         skill: this.activeSkill,
