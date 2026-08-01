@@ -52,33 +52,32 @@ document.addEventListener('DOMContentLoaded', () => {
                 activeSkillSelect,
                 options.skills,
                 settings.activeSkill,
-                'dsa',
                 'No skills found'
             );
             populatePromptSelect(
                 activeProfileSelect,
                 options.profiles,
                 settings.activeProfile,
-                'aniruddh',
                 'No profiles found'
             );
         } catch (error) {
             console.error('Failed to load dynamic prompt options:', error);
-            populatePromptSelect(activeSkillSelect, [], null, 'dsa', 'No skills found');
-            populatePromptSelect(activeProfileSelect, [], null, 'aniruddh', 'No profiles found');
+            populatePromptSelect(activeSkillSelect, [], '', 'No skills found');
+            populatePromptSelect(activeProfileSelect, [], '', 'No profiles found');
         }
     };
 
-    const populatePromptSelect = (select, items, savedValue, preferredValue, emptyLabel) => {
+    const populatePromptSelect = (select, items, savedValue, emptyLabel) => {
         if (!select) return;
 
         select.replaceChildren();
+        select.appendChild(new Option('None', ''));
 
         if (!Array.isArray(items) || items.length === 0) {
-            const option = new Option(emptyLabel, '');
+            const option = new Option(emptyLabel, '__unavailable');
             option.disabled = true;
-            option.selected = true;
             select.appendChild(option);
+            select.value = '';
             return;
         }
 
@@ -87,12 +86,10 @@ document.addEventListener('DOMContentLoaded', () => {
         });
 
         const availableIds = new Set(items.map(item => item.id));
-        if (savedValue && availableIds.has(savedValue)) {
+        if (typeof savedValue === 'string' && savedValue && availableIds.has(savedValue)) {
             select.value = savedValue;
-        } else if (availableIds.has(preferredValue)) {
-            select.value = preferredValue;
         } else {
-            select.value = items[0].id;
+            select.value = '';
         }
     };
 
@@ -147,18 +144,13 @@ document.addEventListener('DOMContentLoaded', () => {
         if (geminiKeyInput) geminiKeyInput.value = settings.geminiKey || '';
         if (windowGapInput) windowGapInput.value = settings.windowGap || '';
 
-        // Set C++ as default if no coding language is specified
         if (codingLanguageSelect) {
-            codingLanguageSelect.value = settings.codingLanguage || 'python';
+            codingLanguageSelect.value = settings.codingLanguage || '';
         }
 
-        if (settings.activeSkill && activeSkillSelect) {
-			activeSkillSelect.value = settings.activeSkill;
-		}
+        if (activeSkillSelect) activeSkillSelect.value = settings.activeSkill || '';
 
-		if (settings.activeProfile && activeProfileSelect) {
-			activeProfileSelect.value = settings.activeProfile;
-		}
+		if (activeProfileSelect) activeProfileSelect.value = settings.activeProfile || '';
 
         // Handle icon selection
         const selectedIcon = settings.selectedIcon || settings.appIcon;
@@ -189,8 +181,8 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Listen for coding language changes from other windows via helper
     window.electronAPI.onCodingLanguageChanged((event, data) => {
-            if (data && data.language && codingLanguageSelect) {
-                codingLanguageSelect.value = data.language;
+            if (data && Object.prototype.hasOwnProperty.call(data, 'language') && codingLanguageSelect) {
+                codingLanguageSelect.value = data.language || '';
                 console.log('Language updated from overlay window:', data.language);
             }
     });

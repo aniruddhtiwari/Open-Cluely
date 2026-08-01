@@ -83,12 +83,12 @@ const config = require("./src/core/config");
 const FirstRunManager = require("./src/core/first-run");
 const { promptLoader } = require("./prompt-loader");
 
-function resolveAvailablePromptId(items, savedId, preferredId) {
+function resolveAvailablePromptId(items, savedId) {
   const availableIds = new Set(items.map(item => item.id));
-
-  if (savedId && availableIds.has(savedId)) return savedId;
-  if (availableIds.has(preferredId)) return preferredId;
-  return items.length > 0 ? items[0].id : null;
+  const normalizedSavedId = typeof savedId === "string" ? savedId.trim() : "";
+  return normalizedSavedId && availableIds.has(normalizedSavedId)
+    ? normalizedSavedId
+    : "";
 }
 
 // ── Global crash guard ──
@@ -129,15 +129,13 @@ class ApplicationController {
     this.starting = false;
     this.activeSkill = resolveAvailablePromptId(
       promptLoader.getAvailableSkills(),
-      process.env.ACTIVE_SKILL,
-      "dsa"
+      process.env.ACTIVE_SKILL
     );
     this.activeProfile = resolveAvailablePromptId(
       promptLoader.getAvailableProfiles(),
-      process.env.ACTIVE_PROFILE,
-      "aniruddh"
+      process.env.ACTIVE_PROFILE
     );
-    this.codingLanguage = process.env.CODING_LANGUAGE || "python";
+    this.codingLanguage = process.env.CODING_LANGUAGE || "";
     this.speechAvailable = false;
 
     // Utterance coalescing: VAD emits a transcript per natural pause, but a
@@ -940,14 +938,14 @@ class ApplicationController {
     });
 
     ipcMain.handle("update-active-skill", (event, skill) => {
-      this.activeSkill = skill;
-      windowManager.broadcastToAllWindows("skill-changed", { skill });
+      this.activeSkill = typeof skill === "string" ? skill.trim() : "";
+      windowManager.broadcastToAllWindows("skill-changed", { skill: this.activeSkill });
       return { success: true };
     });
 
     ipcMain.handle("update-active-profile", (event, profile) => {
- 	this.activeProfile = profile;
-  	windowManager.broadcastToAllWindows("profile-changed", { profile });
+      this.activeProfile = typeof profile === "string" ? profile.trim() : "";
+      windowManager.broadcastToAllWindows("profile-changed", { profile: this.activeProfile });
   	return { success: true };
     });
     ipcMain.handle("restart-app-for-stealth", () => {
@@ -1020,8 +1018,8 @@ class ApplicationController {
 
     // Handle update skill
     ipcMain.on("update-skill", (event, skill) => {
-      this.activeSkill = skill;
-      windowManager.broadcastToAllWindows("skill-updated", { skill });
+      this.activeSkill = typeof skill === "string" ? skill.trim() : "";
+      windowManager.broadcastToAllWindows("skill-updated", { skill: this.activeSkill });
     });
 
     // Handle quit app (alternative method)
@@ -1849,7 +1847,7 @@ class ApplicationController {
     // using. Empty strings are returned rather than skipped so the UI can
     // distinguish "unset" from "stale value from a previous load".
     return {
-      codingLanguage: this.codingLanguage || "python",
+      codingLanguage: this.codingLanguage || "",
       activeSkill: this.activeSkill,
       activeProfile: this.activeProfile,
       appIcon: this.appIcon || "terminal",
@@ -1877,27 +1875,27 @@ class ApplicationController {
   saveSettings(settings) {
     try {
       // ── In-memory updates + window broadcasts ──
-      if (settings.codingLanguage) {
-        this.codingLanguage = settings.codingLanguage;
+      if (Object.prototype.hasOwnProperty.call(settings, "codingLanguage")) {
+        this.codingLanguage = typeof settings.codingLanguage === "string"
+          ? settings.codingLanguage.trim()
+          : "";
         windowManager.broadcastToAllWindows("coding-language-changed", {
-          language: settings.codingLanguage,
+          language: this.codingLanguage,
         });
       }
-      if (settings.activeSkill) {
+      if (Object.prototype.hasOwnProperty.call(settings, "activeSkill")) {
         this.activeSkill = resolveAvailablePromptId(
           promptLoader.getAvailableSkills(),
-          settings.activeSkill,
-          "dsa"
+          settings.activeSkill
         );
         windowManager.broadcastToAllWindows("skill-updated", {
           skill: this.activeSkill,
         });
       }
-      if (settings.activeProfile) {
+      if (Object.prototype.hasOwnProperty.call(settings, "activeProfile")) {
         this.activeProfile = resolveAvailablePromptId(
           promptLoader.getAvailableProfiles(),
-          settings.activeProfile,
-          "aniruddh"
+          settings.activeProfile
         );
         windowManager.broadcastToAllWindows("profile-updated", {
           profile: this.activeProfile,
@@ -1920,13 +1918,13 @@ class ApplicationController {
       // Writing to .env ensures they survive app restarts and are picked
       // up the next time the app boots.
       const envUpdates = {};
-      if (settings.codingLanguage) {
+      if (Object.prototype.hasOwnProperty.call(settings, "codingLanguage")) {
         envUpdates.CODING_LANGUAGE = this.codingLanguage;
       }
-      if (settings.activeSkill) {
+      if (Object.prototype.hasOwnProperty.call(settings, "activeSkill")) {
         envUpdates.ACTIVE_SKILL = this.activeSkill || "";
       }
-      if (settings.activeProfile) {
+      if (Object.prototype.hasOwnProperty.call(settings, "activeProfile")) {
         envUpdates.ACTIVE_PROFILE = this.activeProfile || "";
       }
       if (settings.speechProvider === "azure" || settings.speechProvider === "whisper") {

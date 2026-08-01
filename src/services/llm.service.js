@@ -137,7 +137,11 @@ class LLMService {
     try {
       // Build system instruction using the skill prompt (with optional language injection)
       const { promptLoader } = require('../../prompt-loader');
-      const skillPrompt = promptLoader.getSkillPrompt(activeSkill, activeProfile, programmingLanguage) || '';
+      const skillPrompt = promptLoader.getCombinedPrompt(
+        activeSkill,
+        activeProfile,
+        programmingLanguage
+      );
 
       // Build request with text + image parts
       const base64 = imageBuffer.toString('base64');
@@ -240,7 +244,11 @@ class LLMService {
 
     try {
       const { promptLoader } = require('../../prompt-loader');
-      const skillPrompt = promptLoader.getSkillPrompt(activeSkill, activeProfile, programmingLanguage) || '';
+      const skillPrompt = promptLoader.getCombinedPrompt(
+        activeSkill,
+        activeProfile,
+        programmingLanguage
+      );
       const base64 = imageBuffer.toString('base64');
 
       const geminiRequest = {
@@ -300,7 +308,10 @@ class LLMService {
 
   formatImageInstruction(activeSkill, programmingLanguage) {
     const langNote = programmingLanguage ? ` Use only ${programmingLanguage.toUpperCase()} for any code.` : '';
-    return `Analyze this image for a ${activeSkill.toUpperCase()} question. Extract the problem concisely and provide the best possible solution with explanation and final code.${langNote}`;
+    const skillNote = activeSkill
+      ? ` for a ${String(activeSkill).toUpperCase()} question`
+      : '';
+    return `Analyze this image${skillNote}. Extract the problem concisely and provide the best possible solution with explanation and final code.${langNote}`;
   }
 
   async processTextWithSkill(
@@ -807,13 +818,11 @@ class LLMService {
 
     // Add intelligent filtering system instruction
     const intelligentPrompt = this.getIntelligentTranscriptionPrompt(activeSkill, programmingLanguage);
-    if (!intelligentPrompt) {
-      throw new Error('Failed to generate intelligent transcription prompt');
+    if (intelligentPrompt) {
+      request.systemInstruction = {
+        parts: [{ text: intelligentPrompt }]
+      };
     }
-
-    request.systemInstruction = {
-      parts: [{ text: intelligentPrompt }]
-    };
 
     request.contents.push({
       role: 'user',
@@ -839,7 +848,9 @@ class LLMService {
 
   // For chat/transcription messages, DO NOT include the full skill prompt; use only the intelligent filter prompt
   const intelligentPrompt = this.getIntelligentTranscriptionPrompt(activeSkill, programmingLanguage);
-  request.systemInstruction = { parts: [{ text: intelligentPrompt }] };
+  if (intelligentPrompt) {
+    request.systemInstruction = { parts: [{ text: intelligentPrompt }] };
+  }
 
     // Add recent conversation history (excluding system messages) with validation
     const conversationContents = conversationHistory
@@ -897,6 +908,27 @@ class LLMService {
   }
 
   getIntelligentTranscriptionPrompt(activeSkill, programmingLanguage) {
+    if (!activeSkill) {
+      let genericPrompt = `# Intelligent Transcription Response System
+
+Determine whether the transcript contains an actual question or request.
+- Answer substantive questions and requests naturally, directly, and with appropriate brevity.
+- Do not assume any particular skill, profession, or subject domain.
+- Avoid responding unnecessarily to obvious filler, accidental fragments, or background noise when no meaningful response is needed.
+- Do not repeat the transcript or add unrelated information.`;
+
+      if (programmingLanguage) {
+        const lang = String(programmingLanguage).toLowerCase();
+        const languageMap = { cpp: 'C++', c: 'C', python: 'Python', java: 'Java', javascript: 'JavaScript', js: 'JavaScript' };
+        const fenceTagMap = { cpp: 'cpp', c: 'c', python: 'python', java: 'java', javascript: 'javascript', js: 'javascript' };
+        const languageTitle = languageMap[lang] || (lang.charAt(0).toUpperCase() + lang.slice(1));
+        const fenceTag = fenceTagMap[lang] || lang || 'text';
+        genericPrompt += `\n\nWhen a response requires code, prefer ${languageTitle} and use the code-fence language tag \`${fenceTag}\`. Do not force code or a programming language when it is not relevant to the request.`;
+      }
+
+      return genericPrompt;
+    }
+
     let prompt = `# Intelligent Transcription Response System
 
 Assume you are asked a question in ${activeSkill.toUpperCase()} mode. Your job is to intelligently respond to question/message with appropriate brevity.
@@ -953,7 +985,8 @@ Remember: Be intelligent about filtering - only provide detailed responses when 
   }
 
   formatUserMessage(text, activeSkill) {
-    return `Context: ${activeSkill.toUpperCase()} analysis request\n\nText to analyze:\n${text}`;
+    if (!activeSkill) return `Text to analyze:\n${text}`;
+    return `Context: ${String(activeSkill).toUpperCase()} analysis request\n\nText to analyze:\n${text}`;
   }
 
   async executeRequest(geminiRequest) {
