@@ -23,20 +23,156 @@ const COMMON_RETRIEVAL_TERMS = new Set([
   'developed', 'development', 'experience', 'project', 'service', 'system',
   'team', 'technology', 'used', 'using', 'work'
 ]);
-const QUERY_EXPANSIONS = Object.freeze([
+const QUERY_INTENT_EXPANSIONS = Object.freeze([
   Object.freeze({
-    phrase: 'tell me about yourself',
+    patterns: Object.freeze([
+      /tell me about yourself/,
+      /walk me through (?:your )?experience/,
+      /describe (?:your )?background/,
+      /professional experience/,
+      /how many years/
+    ]),
     terms: Object.freeze([
-      'professional', 'summary', 'experience', 'skills', 'career', 'profile'
+      'professional', 'summary', 'career', 'experience', 'skills', 'background',
+      'leadership', 'responsibilities'
     ])
   }),
   Object.freeze({
-    phrase: 'current project',
+    patterns: Object.freeze([
+      /good fit/,
+      /hire you/,
+      /experience match(?:es)? (?:this |the )?role/,
+      /why (?:are )?you suitable/
+    ]),
     terms: Object.freeze([
-      'project', 'responsibilities', 'architecture', 'implementation'
+      'experience', 'skills', 'qualifications', 'responsibilities', 'requirements',
+      'technical', 'leadership', 'background'
+    ])
+  }),
+  Object.freeze({
+    patterns: Object.freeze([
+      /current project/,
+      /about your project/,
+      /your role in (?:the |this )?project/,
+      /day to day responsibilities/,
+      /your contribution/
+    ]),
+    terms: Object.freeze([
+      'project', 'architecture', 'responsibilities', 'implementation',
+      'contribution', 'role', 'design', 'delivery', 'technologies'
+    ])
+  }),
+  Object.freeze({
+    patterns: Object.freeze([
+      /improv(?:e|ed|ing) performance/,
+      /optimi[sz](?:e|ed|ing|ation).*processing/,
+      /reduc(?:e|ed|ing) latency/,
+      /batch optimi[sz]ation/,
+      /\btuning\b/
+    ]),
+    terms: Object.freeze([
+      'performance', 'optimization', 'latency', 'throughput', 'batch',
+      'batches', 'processing', 'runtime', 'tuning', 'compaction', 'scalability'
+    ])
+  }),
+  Object.freeze({
+    patterns: Object.freeze([
+      /data quality/,
+      /\bvalidation\b/,
+      /\breconciliation\b/,
+      /quality framework/
+    ]),
+    terms: Object.freeze([
+      'quality', 'validation', 'rules', 'reconciliation', 'exceptions',
+      'monitoring', 'framework'
+    ])
+  }),
+  Object.freeze({
+    patterns: Object.freeze([
+      /source systems?/,
+      /data sources?/,
+      /systems? did you integrate/,
+      /\bingestion\b/
+    ]),
+    terms: Object.freeze([
+      'sources', 'source', 'ingestion', 'integration', 'oracle', 'sql', 'api',
+      'apis', 'files', 'feeds'
+    ])
+  }),
+  Object.freeze({
+    patterns: Object.freeze([
+      /business domain/,
+      /\bindustry\b/,
+      /business process/,
+      /regulatory requirements?/
+    ]),
+    terms: Object.freeze([
+      'domain', 'business', 'industry', 'process', 'regulatory', 'reporting',
+      'compliance'
+    ])
+  }),
+  Object.freeze({
+    patterns: Object.freeze([
+      /\bchallenges?\b/,
+      /\boutcomes?\b/,
+      /\bresults?\b/,
+      /\bimpact\b/,
+      /\bachievements?\b/
+    ]),
+    terms: Object.freeze([
+      'challenge', 'challenges', 'solution', 'outcome', 'result', 'impact',
+      'improvement', 'achievement'
     ])
   })
 ]);
+
+const QUERY_SYNONYMS = Object.freeze([
+  Object.freeze({
+    patterns: Object.freeze([/\btools?\b/]),
+    terms: Object.freeze([
+      'technologies', 'technology', 'stack', 'skills', 'python', 'sql', 'azure',
+      'snowflake', 'databricks', 'dbt'
+    ])
+  }),
+  Object.freeze({ patterns: Object.freeze([/\btechnologies\b/]), terms: Object.freeze(['tools', 'technology', 'stack']) }),
+  Object.freeze({ patterns: Object.freeze([/source systems?/]), terms: Object.freeze(['sources', 'ingestion', 'integration']) }),
+  Object.freeze({ patterns: Object.freeze([/\badf\b/]), terms: Object.freeze(['azure', 'data', 'factory']) }),
+  Object.freeze({ patterns: Object.freeze([/azure data factory/]), terms: Object.freeze(['adf']) }),
+  Object.freeze({ patterns: Object.freeze([/\bscd2\b/]), terms: Object.freeze(['scd', 'type', '2']) }),
+  Object.freeze({ patterns: Object.freeze([/scd type 2/]), terms: Object.freeze(['scd2']) }),
+  Object.freeze({ patterns: Object.freeze([/data quality/]), terms: Object.freeze(['validation', 'reconciliation', 'quality']) }),
+  Object.freeze({ patterns: Object.freeze([/batch processing/]), terms: Object.freeze(['batch', 'processing', 'throughput']) })
+]);
+
+const PERSONAL_QUERY_PATTERNS = Object.freeze([
+  /\byou\b/,
+  /\byour\b/,
+  /did you/,
+  /have you/,
+  /how did you/,
+  /tell me about your/,
+  /what was your/
+]);
+const PROJECT_QUERY_PATTERN = /current project|about your project|your role in (?:the |this )?project|day to day responsibilities|your contribution/;
+const PERFORMANCE_QUERY_PATTERN = /improv(?:e|ed|ing) performance|optimi[sz](?:e|ed|ing|ation).*processing|reduc(?:e|ed|ing) latency|batch optimi[sz]ation|\btuning\b/;
+const DOMAIN_QUERY_PATTERN = /business domain|\bindustry\b|business process|regulatory requirements?/;
+const PERSONAL_DOCUMENT_NAME_TERMS = Object.freeze(['resume', 'profile', 'project', 'experience']);
+const REFERENCE_DOCUMENT_NAME_TERMS = Object.freeze([
+  'job', 'jd', 'description', 'requirements', 'guide', 'reference',
+  'documentation', 'docs'
+]);
+const PERSONAL_CONTENT_TERMS = Object.freeze([
+  'responsibilities', 'implemented', 'designed', 'built', 'worked', 'led',
+  'developed', 'project'
+]);
+const DOCUMENT_NAME_BOOST = 0.6;
+const PERSONAL_DOCUMENT_BOOST = 1.4;
+const PROJECT_DOCUMENT_BOOST = 1;
+const PERSONAL_PERFORMANCE_PROJECT_BOOST = 0.8;
+const DOMAIN_DOCUMENT_BOOST = 1.8;
+const PERSONAL_CONTENT_TERM_BOOST = 0.35;
+const PERSONAL_REFERENCE_PENALTY = 0.7;
+const SAME_DOCUMENT_SELECTION_FACTORS = Object.freeze([1, 0.9, 0.78]);
 
 class KnowledgeRetrievalService {
   normalizeText(text) {
@@ -106,6 +242,12 @@ class KnowledgeRetrievalService {
       normalizedQuery,
       this.tokenizeNormalizedText(normalizedQuery)
     );
+    const queryContext = Object.freeze({
+      isPersonalExperience: PERSONAL_QUERY_PATTERNS.some(pattern => pattern.test(normalizedQuery)),
+      isProjectIntent: PROJECT_QUERY_PATTERN.test(normalizedQuery),
+      isPerformanceIntent: PERFORMANCE_QUERY_PATTERN.test(normalizedQuery),
+      isDomainIntent: DOMAIN_QUERY_PATTERN.test(normalizedQuery)
+    });
 
     if (!normalizedQuery || queryTokens.length === 0 || sourceChunks.length === 0) {
       return this.createResult(queryText, startTime, sourceChunks.length, 0, [], 0);
@@ -122,23 +264,28 @@ class KnowledgeRetrievalService {
         chunk,
         normalizedQuery,
         queryFrequencies,
-        uniqueQueryTokens
+        uniqueQueryTokens,
+        queryContext
       );
       if (scored.score >= minimumScore) {
         scoredChunks.push({ chunk, score: scored.score, originalPosition });
       }
     });
 
-    scoredChunks.sort((first, second) =>
-      second.score - first.score || first.originalPosition - second.originalPosition
-    );
-
     const selectedChunks = [];
     const selectedIds = new Set();
+    const selectedDocumentCounts = new Map();
+    const remainingCandidates = [...scoredChunks];
     let totalSelectedCharacters = 0;
 
-    for (const candidate of scoredChunks) {
+    while (remainingCandidates.length > 0) {
       if (selectedChunks.length >= topK) break;
+      remainingCandidates.sort((first, second) => {
+        const firstScore = this.applyDiversityFactor(first, selectedDocumentCounts);
+        const secondScore = this.applyDiversityFactor(second, selectedDocumentCounts);
+        return secondScore - firstScore || first.originalPosition - second.originalPosition;
+      });
+      const candidate = remainingCandidates.shift();
       if (selectedIds.has(candidate.chunk.id)) continue;
 
       const remainingCharacters = maxContextCharacters - totalSelectedCharacters;
@@ -156,9 +303,14 @@ class KnowledgeRetrievalService {
         documentName: candidate.chunk.documentName,
         index: candidate.chunk.index,
         content,
-        score: Number(candidate.score.toFixed(4))
+        score: Number(this.applyDiversityFactor(candidate, selectedDocumentCounts).toFixed(4))
       });
       selectedIds.add(candidate.chunk.id);
+      const documentKey = this.getDocumentKey(candidate.chunk);
+      selectedDocumentCounts.set(
+        documentKey,
+        (selectedDocumentCounts.get(documentKey) || 0) + 1
+      );
       totalSelectedCharacters += content.length;
     }
 
@@ -177,8 +329,8 @@ class KnowledgeRetrievalService {
     const expandedTokens = [...queryTokens];
     const seenTokens = new Set(queryTokens);
 
-    for (const expansion of QUERY_EXPANSIONS) {
-      if (!normalizedQuery.includes(expansion.phrase)) continue;
+    for (const expansion of [...QUERY_INTENT_EXPANSIONS, ...QUERY_SYNONYMS]) {
+      if (!expansion.patterns.some(pattern => pattern.test(normalizedQuery))) continue;
 
       for (const term of expansion.terms) {
         if (seenTokens.has(term)) continue;
@@ -204,9 +356,10 @@ class KnowledgeRetrievalService {
     );
   }
 
-  scoreChunk(chunk, normalizedQuery, queryFrequencies, uniqueQueryTokens) {
+  scoreChunk(chunk, normalizedQuery, queryFrequencies, uniqueQueryTokens, queryContext) {
     let score = 0;
     const matchedTokens = [];
+    let documentNameMatched = false;
 
     for (const token of uniqueQueryTokens) {
       const chunkFrequency = Number(chunk.tokenFrequencies[token] || 0);
@@ -219,9 +372,11 @@ class KnowledgeRetrievalService {
       score += Math.min(queryFrequency, 3) * 0.2;
 
       if (chunk.documentNameTokens.includes(token)) {
-        score += 1.5;
+        documentNameMatched = true;
       }
     }
+
+    if (documentNameMatched) score += DOCUMENT_NAME_BOOST;
 
     if (normalizedQuery.length >= 4 && chunk.normalizedContent.includes(normalizedQuery)) {
       score += 4;
@@ -235,14 +390,52 @@ class KnowledgeRetrievalService {
     if (matchedTokens.length > 1) {
       score += Math.min(matchedTokens.length - 1, 5) * 0.75;
     }
-    if (
-      matchedTokens.length > 0 &&
-      matchedTokens.every(token => COMMON_RETRIEVAL_TERMS.has(token))
-    ) {
-      score *= 0.55;
+    if (matchedTokens.length > 0) {
+      const commonTermCount = matchedTokens.filter(token => COMMON_RETRIEVAL_TERMS.has(token)).length;
+      const commonTermRatio = commonTermCount / matchedTokens.length;
+      score *= 1 - (0.45 * commonTermRatio * commonTermRatio);
+    }
+
+    if (queryContext.isPersonalExperience && matchedTokens.length > 0) {
+      if (PERSONAL_DOCUMENT_NAME_TERMS.some(term => chunk.documentNameTokens.includes(term))) {
+        score += PERSONAL_DOCUMENT_BOOST;
+      }
+      const personalContentMatches = PERSONAL_CONTENT_TERMS.filter(term =>
+        chunk.tokenFrequencies[term]
+      ).length;
+      score += Math.min(personalContentMatches, 4) * PERSONAL_CONTENT_TERM_BOOST;
+      if (queryContext.isProjectIntent && chunk.documentNameTokens.includes('project')) {
+        score += PROJECT_DOCUMENT_BOOST;
+      }
+      if (queryContext.isPerformanceIntent && chunk.documentNameTokens.includes('project')) {
+        score += PERSONAL_PERFORMANCE_PROJECT_BOOST;
+      }
+      if (
+        !queryContext.isDomainIntent &&
+        REFERENCE_DOCUMENT_NAME_TERMS.some(term => chunk.documentNameTokens.includes(term))
+      ) {
+        score = Math.max(0, score - PERSONAL_REFERENCE_PENALTY);
+      }
+    }
+    if (queryContext.isDomainIntent && chunk.documentNameTokens.includes('domain')) {
+      score += DOMAIN_DOCUMENT_BOOST;
     }
 
     return { score, matchedTokens };
+  }
+
+  getDocumentKey(chunk) {
+    return typeof chunk.documentId === 'string' && chunk.documentId
+      ? chunk.documentId
+      : chunk.documentName;
+  }
+
+  applyDiversityFactor(candidate, selectedDocumentCounts) {
+    const selectedCount = selectedDocumentCounts.get(this.getDocumentKey(candidate.chunk)) || 0;
+    const factor = SAME_DOCUMENT_SELECTION_FACTORS[
+      Math.min(selectedCount, SAME_DOCUMENT_SELECTION_FACTORS.length - 1)
+    ];
+    return candidate.score * factor;
   }
 
   normalizePositiveInteger(value, fallback) {
