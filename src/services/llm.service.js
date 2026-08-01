@@ -321,7 +321,8 @@ class LLMService {
     sessionMemory = [],
     programmingLanguage = null,
     selectedChunks = [],
-    retrievalMetadata = {}
+    retrievalMetadata = {},
+    responseGuidance = null
   ) {
     if (!this.isInitialized) {
       throw new Error('LLM service not initialized. Check Gemini API key configuration.');
@@ -347,7 +348,8 @@ class LLMService {
         activeProfile,
         sessionMemory,
         programmingLanguage,
-        selectedChunks
+        selectedChunks,
+        responseGuidance
       );
       const geminiRequest = builtRequest.request;
       knowledgeMetadata = this.createKnowledgeMetadata(
@@ -405,6 +407,8 @@ class LLMService {
           processingTime: Date.now() - startTime,
           requestId: this.requestCount,
           usedFallback: false,
+          responseMode: responseGuidance?.mode || null,
+          responseDepth: responseGuidance?.depth || null,
           ...knowledgeMetadata
         }
       };
@@ -421,6 +425,8 @@ class LLMService {
         const fallbackResult = this.generateFallbackResponse(text, activeSkill);
         fallbackResult.metadata = {
           ...fallbackResult.metadata,
+          responseMode: responseGuidance?.mode || null,
+          responseDepth: responseGuidance?.depth || null,
           ...knowledgeMetadata
         };
         return fallbackResult;
@@ -438,7 +444,8 @@ class LLMService {
     programmingLanguage = null,
     onDelta = null,
     selectedChunks = [],
-    retrievalMetadata = {}
+    retrievalMetadata = {},
+    responseGuidance = null
   ) {
     if (!this.isInitialized) {
       throw new Error('LLM service not initialized. Check Gemini API key configuration.');
@@ -454,7 +461,8 @@ class LLMService {
         activeProfile,
         sessionMemory,
         programmingLanguage,
-        selectedChunks
+        selectedChunks,
+        responseGuidance
       );
       const geminiRequest = builtRequest.request;
       const knowledgeMetadata = this.createKnowledgeMetadata(
@@ -489,6 +497,8 @@ class LLMService {
           requestId: this.requestCount,
           usedFallback: false,
           streamed: true,
+          responseMode: responseGuidance?.mode || null,
+          responseDepth: responseGuidance?.depth || null,
           ...knowledgeMetadata
         }
       };
@@ -504,7 +514,8 @@ class LLMService {
         sessionMemory,
         programmingLanguage,
         selectedChunks,
-        retrievalMetadata
+        retrievalMetadata,
+        responseGuidance
       );
     }
   }
@@ -631,7 +642,8 @@ class LLMService {
     activeProfile,
     sessionMemory,
     programmingLanguage,
-    selectedChunks = []
+    selectedChunks = [],
+    responseGuidance = null
   ) {
     const sessionManager = require('../managers/session.manager');
 
@@ -645,14 +657,19 @@ class LLMService {
         conversationHistory,
         skillContext,
         programmingLanguage,
-        selectedChunks
+        selectedChunks,
+        responseGuidance
       );
     }
 
-    const combinedSystemPrompt = promptLoader.getCombinedPrompt(
+    const skillAndProfilePrompt = promptLoader.getCombinedPrompt(
       activeSkill,
       activeProfile,
       programmingLanguage
+    );
+    const combinedSystemPrompt = this.composeTextSystemInstruction(
+      responseGuidance,
+      skillAndProfilePrompt
     );
     const promptComponents = promptBuilderService.buildPromptComponents({
       question: text,
@@ -687,7 +704,8 @@ class LLMService {
     conversationHistory,
     skillContext,
     programmingLanguage,
-    selectedChunks = []
+    selectedChunks = [],
+    responseGuidance = null
   ) {
     const request = {
       contents: []
@@ -698,11 +716,15 @@ class LLMService {
     // Use the skill prompt from context (which may already include programming language)
     const { promptLoader } = require('../../prompt-loader');
 
-    const combinedPrompt = promptLoader.getCombinedPrompt(
+    const skillAndProfilePrompt = promptLoader.getCombinedPrompt(
       activeSkill,
       activeProfile,
       programmingLanguage
     ) || skillContext.skillPrompt || '';
+    const combinedPrompt = this.composeTextSystemInstruction(
+      responseGuidance,
+      skillAndProfilePrompt
+    );
     const promptComponents = promptBuilderService.buildPromptComponents({
       question: text,
       combinedSystemPrompt: combinedPrompt,
@@ -766,6 +788,16 @@ class LLMService {
     });
 
     return { request, promptMetadata: promptComponents.metadata };
+  }
+
+  composeTextSystemInstruction(responseGuidance, skillAndProfilePrompt) {
+    const applicationGuidance = typeof responseGuidance?.guidance === 'string'
+      ? responseGuidance.guidance.trim()
+      : '';
+    const optionalPrompt = typeof skillAndProfilePrompt === 'string'
+      ? skillAndProfilePrompt.trim()
+      : '';
+    return [applicationGuidance, optionalPrompt].filter(Boolean).join('\n\n');
   }
 
   createKnowledgeMetadata(promptMetadata, retrievalMetadata = {}) {

@@ -116,6 +116,7 @@ const captureService = require("./src/services/capture.service");
 const speechService = require("./src/services/speech.service");
 const llmService = require("./src/services/llm.service");
 const knowledgeRetrievalService = require("./src/services/knowledge-retrieval.service");
+const responseGuidanceService = require("./src/services/response-guidance.service");
 const documentExtractionService = require("./src/services/document-extraction.service");
 const urlIngestionService = require("./src/services/url-ingestion.service");
 
@@ -1268,6 +1269,18 @@ class ApplicationController {
         followUpContext: this.retrievalFollowUpContext
       });
       this.updateRetrievalFollowUpContext(text, retrieval, cachedDocumentChunks.length);
+      const responseClassification = responseGuidanceService.classify({
+        question: text,
+        followUpUsed: retrieval.followUpUsed,
+        activeSkill: this.activeSkill,
+        hasProfile: !!this.activeProfile,
+        hasKnowledge: retrieval.selectedChunks.length > 0,
+        codingLanguage: this.codingLanguage
+      });
+      const responseGuidance = {
+        ...responseClassification,
+        guidance: responseGuidanceService.buildGuidance(responseClassification)
+      };
 
       const llmResult = await llmService.processTextWithSkillStream(
         text,
@@ -1285,7 +1298,8 @@ class ApplicationController {
         {
           retrievalElapsedMs: retrieval.elapsedMs,
           retrievalTotalChunks: retrieval.totalChunks
-        }
+        },
+        responseGuidance
       );
       llmResult.metadata = { ...llmResult.metadata, messageId };
 
