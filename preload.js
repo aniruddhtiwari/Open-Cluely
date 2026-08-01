@@ -31,6 +31,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   sendChatMessage: (text) => ipcRenderer.invoke('send-chat-message', text),
   getSkillPrompt: (skillName) => ipcRenderer.invoke('get-skill-prompt', skillName),
   addSessionDocuments: () => ipcRenderer.invoke('add-session-documents'),
+  addSessionUrl: (url) => ipcRenderer.invoke('add-session-url', url),
   getSessionDocuments: () => ipcRenderer.invoke('get-session-documents'),
   removeSessionDocument: (id) => ipcRenderer.invoke('remove-session-document', id),
   clearSessionDocuments: () => ipcRenderer.invoke('clear-session-documents'),

@@ -601,6 +601,45 @@
         cursor: wait;
         opacity: 0.5;
       }
+      .session-url-entry {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        margin-bottom: 7px;
+      }
+      .session-url-entry[hidden] {
+        display: none;
+      }
+      .session-url-input {
+        min-width: 0;
+        flex: 1;
+        padding: 5px 7px;
+        border: 1px solid rgba(255, 255, 255, 0.15);
+        border-radius: 6px;
+        outline: none;
+        background: rgba(255, 255, 255, 0.08);
+        color: rgba(255, 255, 255, 0.95);
+        font-size: 10px;
+        -webkit-app-region: no-drag;
+      }
+      .session-url-input::placeholder {
+        color: rgba(255, 255, 255, 0.45);
+      }
+      .session-url-submit,
+      .session-url-cancel {
+        border: 0;
+        border-radius: 5px;
+        padding: 5px 8px;
+        background: rgba(255, 255, 255, 0.14);
+        color: rgba(255, 255, 255, 0.9);
+        cursor: pointer;
+        font-size: 9px;
+        -webkit-app-region: no-drag;
+      }
+      .session-url-submit:disabled {
+        cursor: wait;
+        opacity: 0.5;
+      }
       .help-text {
         color: rgba(255, 255, 255, 0.7);
         font-size: 11px;
@@ -807,6 +846,11 @@
             <span class="session-document-status" id="sessionDocumentStatus"></span>
           </div>
         </div>
+        <div class="session-url-entry" id="sessionUrlEntry" hidden>
+          <input class="session-url-input" id="sessionUrlInput" type="url" placeholder="https://example.com/page" aria-label="Public webpage URL">
+          <button class="session-url-submit" id="submitSessionUrlBtn" type="button">Add</button>
+          <button class="session-url-cancel" id="cancelSessionUrlBtn" type="button">Cancel</button>
+        </div>
         <div class="input-container">
           <textarea
             class="input-field"
@@ -816,6 +860,9 @@
           ></textarea>
           <button class="attachment-button" id="addSessionDocumentsBtn" type="button" title="Add session documents" aria-label="Add session documents">
             <i class="fas fa-paperclip"></i>
+          </button>
+          <button class="attachment-button" id="showSessionUrlBtn" type="button" title="Add public URL" aria-label="Add public URL">
+            <i class="fas fa-link"></i>
           </button>
           <button class="mic-button" id="micButton">
             <i class="fas fa-microphone"></i>
@@ -856,6 +903,11 @@
       const sessionDocumentChips = document.getElementById('sessionDocumentChips');
       const sessionDocumentStatus = document.getElementById('sessionDocumentStatus');
       const addSessionDocumentsBtn = document.getElementById('addSessionDocumentsBtn');
+      const showSessionUrlBtn = document.getElementById('showSessionUrlBtn');
+      const sessionUrlEntry = document.getElementById('sessionUrlEntry');
+      const sessionUrlInput = document.getElementById('sessionUrlInput');
+      const submitSessionUrlBtn = document.getElementById('submitSessionUrlBtn');
+      const cancelSessionUrlBtn = document.getElementById('cancelSessionUrlBtn');
       const clearSessionDocumentsBtn = document.getElementById('clearSessionDocumentsBtn');
 
       let isRecording = false;
@@ -1635,6 +1687,66 @@
             setSessionDocumentStatus('Could not add files', true);
           } finally {
             addSessionDocumentsBtn.disabled = false;
+          }
+        });
+      }
+
+      function closeSessionUrlEntry() {
+        if (!sessionUrlEntry || !sessionUrlInput) return;
+        sessionUrlEntry.hidden = true;
+        sessionUrlInput.value = '';
+      }
+
+      async function addSessionUrl() {
+        const url = sessionUrlInput ? sessionUrlInput.value.trim() : '';
+        if (!url) {
+          setSessionDocumentStatus('Enter a public webpage URL', true);
+          return;
+        }
+
+        submitSessionUrlBtn.disabled = true;
+        if (showSessionUrlBtn) showSessionUrlBtn.disabled = true;
+        setSessionDocumentStatus('Indexing...');
+        try {
+          const result = await whysperAPI.addSessionUrl(url);
+          renderSessionDocuments(result.documents || []);
+          if (!result.success) {
+            setSessionDocumentStatus(result.error?.message || 'Could not add URL', true);
+            return;
+          }
+          closeSessionUrlEntry();
+          setSessionDocumentStatus('Indexed');
+        } catch (error) {
+          console.error('Failed to add session URL:', error);
+          setSessionDocumentStatus('Could not add URL', true);
+        } finally {
+          submitSessionUrlBtn.disabled = false;
+          if (showSessionUrlBtn) showSessionUrlBtn.disabled = false;
+        }
+      }
+
+      if (showSessionUrlBtn) {
+        showSessionUrlBtn.addEventListener('click', () => {
+          sessionUrlEntry.hidden = false;
+          sessionUrlInput.focus();
+        });
+      }
+
+      if (submitSessionUrlBtn) {
+        submitSessionUrlBtn.addEventListener('click', addSessionUrl);
+      }
+
+      if (cancelSessionUrlBtn) {
+        cancelSessionUrlBtn.addEventListener('click', closeSessionUrlEntry);
+      }
+
+      if (sessionUrlInput) {
+        sessionUrlInput.addEventListener('keydown', event => {
+          if (event.key === 'Enter') {
+            event.preventDefault();
+            addSessionUrl();
+          } else if (event.key === 'Escape') {
+            closeSessionUrlEntry();
           }
         });
       }

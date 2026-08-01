@@ -117,6 +117,7 @@ const speechService = require("./src/services/speech.service");
 const llmService = require("./src/services/llm.service");
 const knowledgeRetrievalService = require("./src/services/knowledge-retrieval.service");
 const documentExtractionService = require("./src/services/document-extraction.service");
+const urlIngestionService = require("./src/services/url-ingestion.service");
 
 // Managers
 const windowManager = require("./src/managers/window.manager");
@@ -641,6 +642,22 @@ class ApplicationController {
           documents: sessionManager.getSessionDocumentSummaries(),
           added: [],
           errors: [{ name: "File picker", message: "Unable to open the file picker" }]
+        };
+      }
+    });
+
+    ipcMain.handle("add-session-url", async (event, url) => {
+      try {
+        return await this.addSessionUrl(url);
+      } catch (error) {
+        logger.warn("Session URL was not added", {
+          result: "failure",
+          error: error.message
+        });
+        return {
+          success: false,
+          documents: sessionManager.getSessionDocumentSummaries(),
+          error: { message: error.message }
         };
       }
     });
@@ -1796,6 +1813,33 @@ class ApplicationController {
       documents: sessionManager.getSessionDocumentSummaries(),
       added,
       errors
+    };
+  }
+
+  async addSessionUrl(url) {
+    if (typeof url !== "string" || !url.trim()) {
+      throw new Error("Enter a public webpage URL");
+    }
+
+    const extraction = await urlIngestionService.ingest(url.trim());
+    const summary = sessionManager.addSessionDocument({
+      name: extraction.name,
+      extension: extraction.extension,
+      sizeBytes: extraction.sizeBytes,
+      content: extraction.content
+    });
+    logger.info("Session URL added", {
+      hostname: extraction.metadata.hostname,
+      downloadedBytes: extraction.metadata.downloadedBytes,
+      extractedCharacters: extraction.metadata.extractedCharacters,
+      statusCode: extraction.metadata.statusCode,
+      elapsedMs: extraction.metadata.elapsedMs,
+      result: "success"
+    });
+    return {
+      success: true,
+      document: summary,
+      documents: sessionManager.getSessionDocumentSummaries()
     };
   }
 
