@@ -322,7 +322,8 @@ class LLMService {
     programmingLanguage = null,
     selectedChunks = [],
     retrievalMetadata = {},
-    responseGuidance = ''
+    responseGuidance = '',
+    manualSessionContext = ''
   ) {
     if (!this.isInitialized) {
       throw new Error('LLM service not initialized. Check Gemini API key configuration.');
@@ -349,7 +350,8 @@ class LLMService {
         sessionMemory,
         programmingLanguage,
         selectedChunks,
-        responseGuidance
+        responseGuidance,
+        manualSessionContext
       );
       const geminiRequest = builtRequest.request;
       knowledgeMetadata = this.createKnowledgeMetadata(
@@ -441,7 +443,8 @@ class LLMService {
     onDelta = null,
     selectedChunks = [],
     retrievalMetadata = {},
-    responseGuidance = ''
+    responseGuidance = '',
+    manualSessionContext = ''
   ) {
     if (!this.isInitialized) {
       throw new Error('LLM service not initialized. Check Gemini API key configuration.');
@@ -458,7 +461,8 @@ class LLMService {
         sessionMemory,
         programmingLanguage,
         selectedChunks,
-        responseGuidance
+        responseGuidance,
+        manualSessionContext
       );
       const geminiRequest = builtRequest.request;
       const knowledgeMetadata = this.createKnowledgeMetadata(
@@ -509,7 +513,8 @@ class LLMService {
         programmingLanguage,
         selectedChunks,
         retrievalMetadata,
-        responseGuidance
+        responseGuidance,
+        manualSessionContext
       );
     }
   }
@@ -522,7 +527,8 @@ class LLMService {
     programmingLanguage = null,
     selectedChunks = [],
     retrievalMetadata = {},
-    responseGuidance = ''
+    responseGuidance = '',
+    manualSessionContext = ''
   ) {
     if (!this.isInitialized) {
       throw new Error('LLM service not initialized. Check Gemini API key configuration.');
@@ -547,7 +553,8 @@ class LLMService {
         sessionMemory,
         programmingLanguage,
         selectedChunks,
-        responseGuidance
+        responseGuidance,
+        manualSessionContext
       );
       const geminiRequest = builtRequest.request;
       const knowledgeMetadata = this.createKnowledgeMetadata(
@@ -661,7 +668,8 @@ class LLMService {
     sessionMemory,
     programmingLanguage,
     selectedChunks = [],
-    responseGuidance = ''
+    responseGuidance = '',
+    manualSessionContext = ''
   ) {
     const sessionManager = require('../managers/session.manager');
     if (Array.isArray(sessionMemory)) {
@@ -675,7 +683,8 @@ class LLMService {
         skillContext,
         programmingLanguage,
         selectedChunks,
-        responseGuidance
+        responseGuidance,
+        manualSessionContext
       );
     }
 
@@ -691,7 +700,8 @@ class LLMService {
     const promptComponents = promptBuilderService.buildPromptComponents({
       question: text,
       combinedSystemPrompt,
-      selectedChunks
+      selectedChunks,
+      manualSessionContext
     });
 
     const request = {
@@ -722,7 +732,8 @@ class LLMService {
     skillContext,
     programmingLanguage,
     selectedChunks = [],
-    responseGuidance = ''
+    responseGuidance = '',
+    manualSessionContext = ''
   ) {
     const request = {
       contents: []
@@ -745,7 +756,8 @@ class LLMService {
     const promptComponents = promptBuilderService.buildPromptComponents({
       question: text,
       combinedSystemPrompt: combinedPrompt,
-      selectedChunks
+      selectedChunks,
+      manualSessionContext
     });
 
     if (promptComponents.systemInstruction) {
@@ -848,7 +860,8 @@ class LLMService {
     sessionMemory = [],
     programmingLanguage = null,
     selectedChunks = [],
-    responseGuidance = ''
+    responseGuidance = '',
+    manualSessionContext = ''
   ) {
     // Validate input text first
     const cleanText = text && typeof text === 'string' ? text.trim() : '';
@@ -867,7 +880,8 @@ class LLMService {
         skillContext,
         programmingLanguage,
         selectedChunks,
-        responseGuidance
+        responseGuidance,
+        manualSessionContext
       );
     }
 
@@ -888,7 +902,8 @@ class LLMService {
     const promptComponents = promptBuilderService.buildPromptComponents({
       question: cleanText,
       combinedSystemPrompt,
-      selectedChunks
+      selectedChunks,
+      manualSessionContext
     });
     if (promptComponents.systemInstruction) {
       request.systemInstruction = {
@@ -919,7 +934,8 @@ class LLMService {
     skillContext,
     programmingLanguage,
     selectedChunks = [],
-    responseGuidance = ''
+    responseGuidance = '',
+    manualSessionContext = ''
   ) {
     const request = {
       contents: []
@@ -936,7 +952,8 @@ class LLMService {
     const promptComponents = promptBuilderService.buildPromptComponents({
       question: text,
       combinedSystemPrompt,
-      selectedChunks
+      selectedChunks,
+      manualSessionContext
     });
     if (promptComponents.systemInstruction) {
       request.systemInstruction = {
@@ -1250,7 +1267,8 @@ Remember: Be intelligent about filtering - only provide detailed responses when 
     onDelta = null,
     selectedChunks = [],
     retrievalMetadata = {},
-    responseGuidance = ''
+    responseGuidance = '',
+    manualSessionContext = ''
   ) {
     if (!this.isInitialized) {
       throw new Error('LLM service not initialized. Check Gemini API key configuration.');
@@ -1267,7 +1285,8 @@ Remember: Be intelligent about filtering - only provide detailed responses when 
         sessionMemory,
         programmingLanguage,
         selectedChunks,
-        responseGuidance
+        responseGuidance,
+        manualSessionContext
       );
       const geminiRequest = builtRequest.request;
       const knowledgeMetadata = this.createKnowledgeMetadata(
@@ -1321,7 +1340,8 @@ Remember: Be intelligent about filtering - only provide detailed responses when 
         programmingLanguage,
         selectedChunks,
         retrievalMetadata,
-        responseGuidance
+        responseGuidance,
+        manualSessionContext
       );
     }
   }

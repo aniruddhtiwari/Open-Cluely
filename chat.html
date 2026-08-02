@@ -581,6 +581,14 @@
         background: rgba(255, 255, 255, 0.25);
         color: rgba(255, 255, 255, 1);
       }
+      .context-button,
+      .send-button span {
+        font-size: 10px;
+        white-space: nowrap;
+      }
+      .send-button span {
+        margin-left: 4px;
+      }
       .status-message {
         text-align: center;
         color: rgba(255, 255, 255, 0.7);
@@ -900,7 +908,7 @@
         <div class="input-container">
           <textarea
             class="input-field"
-            placeholder="Type a message… (Shift+Enter for newline)"
+            placeholder="Type a question or add interview context..."
             id="messageInput"
             rows="1"
           ></textarea>
@@ -910,8 +918,10 @@
           <button class="attachment-button" id="showSessionUrlBtn" type="button" title="Add public URL" aria-label="Add public URL">
             <i class="fas fa-link"></i>
           </button>
-          <button class="send-button" id="sendButton">
+          <button class="send-button context-button" id="addContextButton" type="button">Add Context</button>
+          <button class="send-button" id="sendButton" type="button">
             <i class="fas fa-paper-plane"></i>
+            <span>Ask AI</span>
           </button>
         </div>
       </div>
@@ -934,6 +944,7 @@
       const recordingIndicator = document.getElementById('recordingIndicator');
       const messageInput = document.getElementById('messageInput');
       const sendButton = document.getElementById('sendButton');
+      const addContextButton = document.getElementById('addContextButton');
       const chatContainer = document.getElementById('chatContainer');
       const listeningIndicator = document.getElementById('listeningIndicator');
       const listeningDuration = document.getElementById('listeningDuration');
@@ -1879,6 +1890,33 @@
             } catch (error) {
               console.error('Failed to send chat message to main process:', error);
             }
+          }
+        });
+      }
+
+      if (addContextButton) {
+        addContextButton.addEventListener('click', async () => {
+          const text = messageInput.value.trim();
+          if (!text) return;
+
+          addContextButton.disabled = true;
+          try {
+            const result = await whysperAPI.addManualSessionContext(text);
+            if (!result || !result.success) {
+              throw new Error(result && result.message ? result.message : 'Unable to add session context');
+            }
+
+            messageInput.value = '';
+            autoGrow(messageInput);
+            const normalizedPreview = text.replace(/\s+/g, ' ');
+            const preview = normalizedPreview.slice(0, 180);
+            const suffix = normalizedPreview.length > 180 ? '...' : '';
+            addMessage(`Session Context Added:\n"${preview}${suffix}"`, 'system', true);
+          } catch (error) {
+            console.error('Failed to add manual session context:', error);
+            addMessage(`Could not add session context: ${error.message}`, 'system', true);
+          } finally {
+            addContextButton.disabled = false;
           }
         });
       }

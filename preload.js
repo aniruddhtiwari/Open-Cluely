@@ -31,6 +31,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   clearSessionMemory: () => ipcRenderer.invoke('clear-session-memory'),
   formatSessionHistory: () => ipcRenderer.invoke('format-session-history'),
   sendChatMessage: (text) => ipcRenderer.invoke('send-chat-message', text),
+  addManualSessionContext: (text) => ipcRenderer.invoke('add-manual-session-context', text),
   getSkillPrompt: (skillName) => ipcRenderer.invoke('get-skill-prompt', skillName),
   addSessionDocuments: (evidenceType) => ipcRenderer.invoke('add-session-documents', evidenceType),
   addSessionUrl: (url, evidenceType) => ipcRenderer.invoke('add-session-url', url, evidenceType),

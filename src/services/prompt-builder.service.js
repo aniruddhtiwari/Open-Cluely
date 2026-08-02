@@ -38,19 +38,24 @@ class PromptBuilderService {
   buildPromptComponents({
     question,
     combinedSystemPrompt = '',
-    selectedChunks = []
+    selectedChunks = [],
+    manualSessionContext = ''
   } = {}) {
     const normalizedQuestion = this.normalizeQuestion(question);
     const preparedKnowledge = this.prepareSelectedChunks(selectedChunks);
     const systemInstruction = typeof combinedSystemPrompt === 'string'
       ? combinedSystemPrompt.trim()
       : '';
+    const normalizedManualContext = typeof manualSessionContext === 'string'
+      ? manualSessionContext.trim()
+      : '';
 
     return {
       systemInstruction,
       userMessage: this.composeUserMessage(
         normalizedQuestion,
-        preparedKnowledge.knowledgeSection
+        preparedKnowledge.knowledgeSection,
+        normalizedManualContext
       ),
       metadata: {
         usedKnowledge: preparedKnowledge.chunks.length > 0,
@@ -59,7 +64,8 @@ class PromptBuilderService {
           preparedKnowledge.chunks.map(chunk => chunk.documentId || chunk.documentName)
         ).size,
         knowledgeCharacters: preparedKnowledge.knowledgeCharacters,
-        questionCharacters: normalizedQuestion.length
+        questionCharacters: normalizedQuestion.length,
+        manualContextCharacters: normalizedManualContext.length
       }
     };
   }
@@ -198,9 +204,10 @@ class PromptBuilderService {
     };
   }
 
-  composeUserMessage(question, knowledgeSection) {
-    if (!knowledgeSection) return question;
-    return `${knowledgeSection}\n\nCURRENT QUESTION\n\n${question}`;
+  composeUserMessage(question, knowledgeSection, manualSessionContext = '') {
+    const contextSections = [manualSessionContext, knowledgeSection].filter(Boolean);
+    if (contextSections.length === 0) return question;
+    return `${contextSections.join('\n\n')}\n\nCURRENT QUESTION\n\n${question}`;
   }
 }
 

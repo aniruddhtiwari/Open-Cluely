@@ -801,6 +801,23 @@ class ApplicationController {
       return { success: true };
     });
 
+    ipcMain.handle("add-manual-session-context", (event, text) => {
+      try {
+        const context = sessionManager.addManualSessionContext(text);
+        logger.info("Manual session context added", {
+          contextId: context.id,
+          result: "success"
+        });
+        return { success: true, context };
+      } catch (error) {
+        logger.warn("Manual session context was not added", {
+          result: "failure",
+          error: error.message
+        });
+        return { success: false, message: error.message };
+      }
+    });
+
     ipcMain.handle("get-skill-prompt", (event, skillName) => {
       try {
         const skillPrompt = promptLoader.getSkillPrompt(skillName);
@@ -1373,6 +1390,7 @@ class ApplicationController {
       const responseGuidance = responseGuidanceService.buildGuidance(classification, {
         continuity: retrieval.followUpUsed ? continuity : null
       });
+      const manualSessionContext = sessionManager.getManualSessionContextBlock();
       sessionTelemetryManager.recordRetrieval(interactionId, {
         responseMode: classification.mode,
         responseIntent: classification.intent,
@@ -1404,7 +1422,8 @@ class ApplicationController {
           retrievalElapsedMs: retrieval.elapsedMs,
           retrievalTotalChunks: retrieval.totalChunks
         },
-        responseGuidance
+        responseGuidance,
+        manualSessionContext
       );
       llmResult.metadata = { ...llmResult.metadata, messageId, interactionId };
       sessionTelemetryManager.completeInteraction(interactionId, llmResult.response);
@@ -1622,6 +1641,7 @@ class ApplicationController {
       const responseGuidance = responseGuidanceService.buildGuidance(classification, {
         continuity: retrieval.followUpUsed ? continuity : null
       });
+      const manualSessionContext = sessionManager.getManualSessionContextBlock();
       sessionTelemetryManager.recordRetrieval(interactionId, {
         responseMode: classification.mode,
         responseIntent: classification.intent,
@@ -1652,7 +1672,8 @@ class ApplicationController {
           retrievalElapsedMs: retrieval.elapsedMs,
           retrievalTotalChunks: retrieval.totalChunks
         },
-        responseGuidance
+        responseGuidance,
+        manualSessionContext
       );
       llmResult.metadata = { ...llmResult.metadata, messageId, interactionId };
       sessionTelemetryManager.completeInteraction(interactionId, llmResult.response);

@@ -4,6 +4,13 @@ const { promptLoader } = require('../../prompt-loader');
 const knowledgeRetrievalService = require('../services/knowledge-retrieval.service');
 
 const MAX_SESSION_DOCUMENT_CONTENT_CHARACTERS = 2000000;
+const MAX_MANUAL_SESSION_CONTEXT_CHARACTERS = 8000;
+const MANUAL_SESSION_CONTEXT_GUIDANCE = [
+  'MANUAL SESSION CONTEXT',
+  'The user supplied these session facts or instructions directly. Use them when relevant, but do not force them into unrelated answers.',
+  'Later manual-context entries override earlier contradictory entries.',
+  'The current explicit interviewer question or clarification overrides older manual session context.'
+].join('\n\n');
 const SESSION_DOCUMENT_CHUNK_TARGET_CHARACTERS = 1500;
 const SESSION_DOCUMENT_CHUNK_MIN_CHARACTERS = 750;
 const SESSION_DOCUMENT_CHUNK_MAX_CHARACTERS = 2000;
@@ -13,6 +20,8 @@ class SessionManager {
   constructor() {
     this.sessionMemory = [];
     this.sessionDocuments = new Map();
+    this.manualSessionContexts = [];
+    this.manualSessionContextSequence = 0;
     this.compressionEnabled = true;
     this.maxSize = config.get('session.maxMemorySize');
     this.compressionThreshold = config.get('session.compressionThreshold');
@@ -231,6 +240,58 @@ class SessionManager {
     return this.getSessionDocumentSummaries().find(item => item.id === id);
   }
 
+  /** Add in-memory context without adding conversation history or retrieval chunks. */
+  addManualSessionContext(content) {
+    if (typeof content !== 'string' || !content.trim()) {
+      throw new Error('Session context text is required');
+    }
+
+    const normalizedContent = content.replace(/\r\n?/g, '\n').trim();
+    if (normalizedContent.length > MAX_SESSION_DOCUMENT_CONTENT_CHARACTERS) {
+      throw new Error(
+        `Session context exceeds the ${MAX_SESSION_DOCUMENT_CONTENT_CHARACTERS} character limit`
+      );
+    }
+
+    this.manualSessionContextSequence += 1;
+    const id = `manual-context-${this.manualSessionContextSequence}`;
+    const addedAt = new Date().toISOString();
+    this.manualSessionContexts.push(Object.freeze({
+      id,
+      content: normalizedContent,
+      addedAt
+    }));
+
+    return Object.freeze({ id, addedAt });
+  }
+
+  /**
+   * Build a bounded block for every later LLM request. Newest entries are kept
+   * first when the session context exceeds the prompt budget.
+   */
+  getManualSessionContextBlock() {
+    if (this.manualSessionContexts.length === 0) return '';
+
+    const selectedSections = [];
+    let remaining = MAX_MANUAL_SESSION_CONTEXT_CHARACTERS - MANUAL_SESSION_CONTEXT_GUIDANCE.length - 2;
+
+    for (let index = this.manualSessionContexts.length - 1; index >= 0 && remaining > 0; index -= 1) {
+      const context = this.manualSessionContexts[index];
+      const start = `----- BEGIN MANUAL CONTEXT id=${JSON.stringify(context.id)} -----`;
+      const end = `----- END MANUAL CONTEXT id=${JSON.stringify(context.id)} -----`;
+      const overhead = start.length + end.length + 2;
+      if (overhead >= remaining) break;
+
+      const content = context.content.slice(0, remaining - overhead);
+      selectedSections.unshift(`${start}\n${content}\n${end}`);
+      remaining -= overhead + content.length + 2;
+
+      if (content.length < context.content.length) break;
+    }
+
+    return [MANUAL_SESSION_CONTEXT_GUIDANCE, ...selectedSections].join('\n\n');
+  }
+
   /**
    * Get copies of all session documents, including their content.
    */
@@ -287,6 +348,13 @@ class SessionManager {
   clearSessionDocuments() {
     const removedCount = this.sessionDocuments.size;
     this.sessionDocuments.clear();
+    return removedCount;
+  }
+
+  clearManualSessionContexts() {
+    const removedCount = this.manualSessionContexts.length;
+    this.manualSessionContexts = [];
+    this.manualSessionContextSequence = 0;
     return removedCount;
   }
 
@@ -818,10 +886,11 @@ class SessionManager {
   clear() {
     const eventCount = this.sessionMemory.length;
     const documentCount = this.clearSessionDocuments();
+    const manualContextCount = this.clearManualSessionContexts();
     this.sessionMemory = [];
     this.isInitialized = false;
     
-    logger.info('Session memory cleared', { eventCount, documentCount });
+    logger.info('Session memory cleared', { eventCount, documentCount, manualContextCount });
     
     // Reinitialize with skill prompts
     this.initializeWithSkillPrompts();
