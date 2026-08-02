@@ -357,10 +357,15 @@ class KnowledgeRetrievalService {
       : followUpContext && typeof followUpContext.previousQuery === 'string'
         ? followUpContext.previousQuery.trim()
         : '';
+    const previousAnswer = followUpContext && typeof followUpContext.previousAnswer === 'string'
+      ? followUpContext.previousAnswer.trim()
+      : '';
     const isFollowUp = !!previousQuery && this.isAmbiguousFollowUp(queryText);
     return {
       isFollowUp,
-      retrievalQuery: isFollowUp ? `${previousQuery} ${queryText}` : queryText,
+      retrievalQuery: isFollowUp
+        ? [previousQuery, previousAnswer, queryText].filter(Boolean).join(' ')
+        : queryText,
       previousQuery
     };
   }
@@ -368,12 +373,12 @@ class KnowledgeRetrievalService {
   isAmbiguousFollowUp(query) {
     const normalizedQuery = this.normalizeText(query);
     if (!normalizedQuery || STRUCTURAL_STANDALONE_TOPIC_PATTERN.test(normalizedQuery)) return false;
+    if (normalizedQuery === 'why') return true;
+    if (EXPLICIT_FOLLOW_UP_PATTERN.test(normalizedQuery)) return true;
     if (QUERY_INTENT_EXPANSIONS.some(expansion =>
       expansion.patterns.some(pattern => pattern.test(normalizedQuery)))) {
       return false;
     }
-    if (normalizedQuery === 'why') return true;
-    if (EXPLICIT_FOLLOW_UP_PATTERN.test(normalizedQuery)) return true;
     return this.tokenizeNormalizedText(normalizedQuery).length <= 6 &&
       REFERENTIAL_TERM_PATTERN.test(normalizedQuery);
   }
