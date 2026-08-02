@@ -46,7 +46,8 @@ const QUERY_INTENT_EXPANSIONS = Object.freeze([
     ]),
     terms: Object.freeze([
       'experience', 'skills', 'qualifications', 'responsibilities', 'requirements',
-      'technical', 'leadership', 'background'
+      'technical', 'leadership', 'background', 'professional', 'summary',
+      'project', 'contribution', 'collaboration', 'delivery'
     ])
   }),
   Object.freeze({
@@ -60,6 +61,16 @@ const QUERY_INTENT_EXPANSIONS = Object.freeze([
     terms: Object.freeze([
       'project', 'architecture', 'responsibilities', 'implementation',
       'contribution', 'role', 'design', 'delivery', 'technologies'
+    ])
+  }),
+  Object.freeze({
+    patterns: Object.freeze([
+      /what challenges? did you face/,
+      /biggest challenge/
+    ]),
+    terms: Object.freeze([
+      'challenge', 'problem', 'issue', 'improvement', 'redesigned', 'reduced',
+      'resolved', 'solution'
     ])
   }),
   Object.freeze({
@@ -95,8 +106,8 @@ const QUERY_INTENT_EXPANSIONS = Object.freeze([
       /\bingestion\b/
     ]),
     terms: Object.freeze([
-      'sources', 'source', 'ingestion', 'integration', 'oracle', 'sql', 'api',
-      'apis', 'files', 'feeds'
+      'sources', 'source', 'ingestion', 'integration', 'api', 'apis', 'files',
+      'feeds'
     ])
   }),
   Object.freeze({
@@ -130,8 +141,7 @@ const QUERY_SYNONYMS = Object.freeze([
   Object.freeze({
     patterns: Object.freeze([/\btools?\b/]),
     terms: Object.freeze([
-      'technologies', 'technology', 'stack', 'skills', 'python', 'sql', 'azure',
-      'snowflake', 'databricks', 'dbt'
+      'technologies', 'technology', 'stack', 'skills'
     ])
   }),
   Object.freeze({ patterns: Object.freeze([/\btechnologies\b/]), terms: Object.freeze(['tools', 'technology', 'stack']) }),
@@ -173,6 +183,9 @@ const DOMAIN_DOCUMENT_BOOST = 1.8;
 const PERSONAL_CONTENT_TERM_BOOST = 0.35;
 const PERSONAL_REFERENCE_PENALTY = 0.7;
 const SAME_DOCUMENT_SELECTION_FACTORS = Object.freeze([1, 0.9, 0.78]);
+const EXPLICIT_FOLLOW_UP_PATTERN = /\b(?:explain (?:that|this|it)|explain in more detail|tell me more|elaborate(?: on (?:that|this|it))?|go deeper|what about (?:that|this|it)|how so|what was (?:the )?outcome|what was your contribution|what tools did you use|what challenges did you face|what was the biggest challenge|how did you solve (?:that|this|it)|how did you do (?:that|this|it)|can you (?:explain|expand|elaborate)(?: (?:that|this|it))?(?: in more detail)?|how did you implement (?:that|this|it))\b/;
+const REFERENTIAL_TERM_PATTERN = /\b(?:that|this|it|those|there)\b/;
+const STRUCTURAL_STANDALONE_TOPIC_PATTERN = /^(?:what (?:is|are)\b.+|(?:explain|describe)\s+(?!(?:that|this|it)\b).+|how (?:does|do)\b.+\bwork\b|(?:what is )?(?:the )?difference between\b.+|compare\b.+)$/;
 
 class KnowledgeRetrievalService {
   normalizeText(text) {
@@ -237,7 +250,8 @@ class KnowledgeRetrievalService {
     const minimumScore = Number.isFinite(options.minimumScore) && options.minimumScore > 0
       ? options.minimumScore
       : DEFAULT_OPTIONS.minimumScore;
-    const normalizedQuery = this.normalizeText(queryText);
+    const retrievalPlan = this.createRetrievalPlan(queryText, options.followUpContext);
+    const normalizedQuery = this.normalizeText(retrievalPlan.retrievalQuery);
     const queryTokens = this.expandQueryTokens(
       normalizedQuery,
       this.tokenizeNormalizedText(normalizedQuery)
@@ -250,7 +264,15 @@ class KnowledgeRetrievalService {
     });
 
     if (!normalizedQuery || queryTokens.length === 0 || sourceChunks.length === 0) {
-      return this.createResult(queryText, startTime, sourceChunks.length, 0, [], 0);
+      return this.createResult(
+        queryText,
+        startTime,
+        sourceChunks.length,
+        0,
+        [],
+        0,
+        retrievalPlan.isFollowUp
+      );
     }
 
     const queryFrequencies = this.createTokenFrequencies(queryTokens);
@@ -267,8 +289,9 @@ class KnowledgeRetrievalService {
         uniqueQueryTokens,
         queryContext
       );
-      if (scored.score >= minimumScore) {
-        scoredChunks.push({ chunk, score: scored.score, originalPosition });
+      const score = scored.score;
+      if (score >= minimumScore) {
+        scoredChunks.push({ chunk, score, originalPosition });
       }
     });
 
@@ -301,6 +324,7 @@ class KnowledgeRetrievalService {
         id: candidate.chunk.id,
         documentId: candidate.chunk.documentId,
         documentName: candidate.chunk.documentName,
+        evidenceType: candidate.chunk.evidenceType || 'unknown',
         index: candidate.chunk.index,
         content,
         score: Number(this.applyDiversityFactor(candidate, selectedDocumentCounts).toFixed(4))
@@ -321,15 +345,45 @@ class KnowledgeRetrievalService {
       sourceChunks.length,
       matchedChunks,
       selectedChunks,
-      totalSelectedCharacters
+      totalSelectedCharacters,
+      retrievalPlan.isFollowUp
     );
+  }
+
+  createRetrievalPlan(query, followUpContext) {
+    const queryText = typeof query === 'string' ? query : '';
+    const previousQuery = followUpContext && typeof followUpContext.previousQuestion === 'string'
+      ? followUpContext.previousQuestion.trim()
+      : followUpContext && typeof followUpContext.previousQuery === 'string'
+        ? followUpContext.previousQuery.trim()
+        : '';
+    const isFollowUp = !!previousQuery && this.isAmbiguousFollowUp(queryText);
+    return {
+      isFollowUp,
+      retrievalQuery: isFollowUp ? `${previousQuery} ${queryText}` : queryText,
+      previousQuery
+    };
+  }
+
+  isAmbiguousFollowUp(query) {
+    const normalizedQuery = this.normalizeText(query);
+    if (!normalizedQuery || STRUCTURAL_STANDALONE_TOPIC_PATTERN.test(normalizedQuery)) return false;
+    if (QUERY_INTENT_EXPANSIONS.some(expansion =>
+      expansion.patterns.some(pattern => pattern.test(normalizedQuery)))) {
+      return false;
+    }
+    if (normalizedQuery === 'why') return true;
+    if (EXPLICIT_FOLLOW_UP_PATTERN.test(normalizedQuery)) return true;
+    return this.tokenizeNormalizedText(normalizedQuery).length <= 6 &&
+      REFERENTIAL_TERM_PATTERN.test(normalizedQuery);
   }
 
   expandQueryTokens(normalizedQuery, queryTokens) {
     const expandedTokens = [...queryTokens];
     const seenTokens = new Set(queryTokens);
+    const expansions = QUERY_INTENT_EXPANSIONS;
 
-    for (const expansion of [...QUERY_INTENT_EXPANSIONS, ...QUERY_SYNONYMS]) {
+    for (const expansion of expansions) {
       if (!expansion.patterns.some(pattern => pattern.test(normalizedQuery))) continue;
 
       for (const term of expansion.terms) {
@@ -339,6 +393,24 @@ class KnowledgeRetrievalService {
       }
     }
 
+    for (const token of this.expandSynonymTokens(normalizedQuery, expandedTokens)) {
+      if (!seenTokens.has(token)) expandedTokens.push(token);
+    }
+
+    return expandedTokens;
+  }
+
+  expandSynonymTokens(normalizedText, tokens) {
+    const expandedTokens = [...tokens];
+    const seenTokens = new Set(tokens);
+    for (const synonym of QUERY_SYNONYMS) {
+      if (!synonym.patterns.some(pattern => pattern.test(normalizedText))) continue;
+      for (const term of synonym.terms) {
+        if (seenTokens.has(term)) continue;
+        expandedTokens.push(term);
+        seenTokens.add(term);
+      }
+    }
     return expandedTokens;
   }
 
@@ -448,7 +520,8 @@ class KnowledgeRetrievalService {
     totalChunks,
     matchedChunks,
     selectedChunks,
-    totalSelectedCharacters
+    totalSelectedCharacters,
+    followUpUsed = false
   ) {
     return {
       query,
@@ -456,7 +529,8 @@ class KnowledgeRetrievalService {
       totalChunks,
       matchedChunks,
       selectedChunks,
-      totalSelectedCharacters
+      totalSelectedCharacters,
+      followUpUsed
     };
   }
 }

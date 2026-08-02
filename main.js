@@ -5,6 +5,12 @@ const { app, BrowserWindow, dialog, globalShortcut, session, ipcMain } = require
 
 const MAX_SESSION_DOCUMENT_FILE_SIZE_BYTES = 10 * 1024 * 1024;
 const ALLOWED_SESSION_DOCUMENT_EXTENSIONS = new Set([".txt", ".md", ".markdown", ".docx", ".pdf", ".pptx", ".csv", ".xlsx", ".xls"]);
+const ALLOWED_SESSION_EVIDENCE_TYPES = new Set(["candidate", "job", "reference", "unknown"]);
+
+function normalizeSessionEvidenceType(value) {
+  const normalized = typeof value === "string" ? value.trim().toLowerCase() : "";
+  return ALLOWED_SESSION_EVIDENCE_TYPES.has(normalized) ? normalized : "unknown";
+}
 
 // ── Resolve a stable .env location ──
 // In packaged builds process.cwd() is unstable and frequently read-only
@@ -116,6 +122,7 @@ const captureService = require("./src/services/capture.service");
 const speechService = require("./src/services/speech.service");
 const llmService = require("./src/services/llm.service");
 const knowledgeRetrievalService = require("./src/services/knowledge-retrieval.service");
+const responseGuidanceService = require("./src/services/response-guidance.service");
 const documentExtractionService = require("./src/services/document-extraction.service");
 const urlIngestionService = require("./src/services/url-ingestion.service");
 
@@ -628,9 +635,9 @@ class ApplicationController {
       return { success: true };
     });
 
-    ipcMain.handle("add-session-documents", async () => {
+    ipcMain.handle("add-session-documents", async (event, evidenceType) => {
       try {
-        return await this.addSessionDocuments();
+        return await this.addSessionDocuments(normalizeSessionEvidenceType(evidenceType));
       } catch (error) {
         logger.error("Failed to open session document picker", {
           error: error.message
@@ -644,9 +651,9 @@ class ApplicationController {
       }
     });
 
-    ipcMain.handle("add-session-url", async (event, url) => {
+    ipcMain.handle("add-session-url", async (event, url, evidenceType) => {
       try {
-        return await this.addSessionUrl(url);
+        return await this.addSessionUrl(url, normalizeSessionEvidenceType(evidenceType));
       } catch (error) {
         logger.warn("Session URL was not added", {
           result: "failure",
@@ -701,18 +708,13 @@ class ApplicationController {
     });
 
     ipcMain.handle("send-chat-message", async (event, text) => {
-      // Add chat message to session memory
-      sessionManager.addUserInput(text, 'chat');
-      logger.debug('Chat message added to session memory', { textLength: text.length });
-
       // Typed messages need the full skill pipeline (with history context),
       // NOT the voice "intelligent filter" pipeline. Voice keeps its filter
       // behaviour; typed chat goes through processWithLLM so it gets real
       // answers using the active skill prompt and recent conversation history.
       (async () => {
         try {
-          const sessionHistory = sessionManager.getOptimizedHistory();
-          await this.processWithLLM(text, sessionHistory);
+          await this.processWithLLM(text);
         } catch (error) {
           logger.error("Failed to process chat message with LLM", {
             error: error.message,
@@ -1242,8 +1244,10 @@ class ApplicationController {
     }
   }
 
-  async processWithLLM(text, sessionHistory) {
+  async processWithLLM(text) {
     try {
+      const conversationalContext = this.getConversationalRequestContext(text);
+
       // Add user input to session memory
       sessionManager.addUserInput(text, 'llm_input');
 
@@ -1260,13 +1264,31 @@ class ApplicationController {
       windowManager.showLLMLoading();
 
       const cachedDocumentChunks = sessionManager.getSessionDocumentChunks();
-      const retrieval = knowledgeRetrievalService.retrieve(text, cachedDocumentChunks);
+      const { continuity, conversationHistory } = conversationalContext;
+      const retrieval = knowledgeRetrievalService.retrieve(text, cachedDocumentChunks, {
+        followUpContext: continuity
+      });
+      const classification = responseGuidanceService.classify({
+        question: text,
+        followUpUsed: retrieval.followUpUsed,
+        hasProfile: !!this.activeProfile,
+        hasKnowledge: retrieval.selectedChunks.length > 0,
+        hasCandidateEvidence: retrieval.selectedChunks.some(
+          chunk => chunk.evidenceType === 'candidate'
+        ),
+        hasReferenceEvidence: retrieval.selectedChunks.some(
+          chunk => chunk.evidenceType === 'reference'
+        )
+      });
+      const responseGuidance = responseGuidanceService.buildGuidance(classification, {
+        continuity: retrieval.followUpUsed ? continuity : null
+      });
 
       const llmResult = await llmService.processTextWithSkillStream(
         text,
         this.activeSkill,
-        this.activeProfile,
-	sessionHistory.recent,
+	this.activeProfile,
+	conversationHistory,
         needsProgrammingLanguage ? this.codingLanguage : null,
         (delta) => {
           windowManager.broadcastToAllWindows("transcription-llm-response-chunk", {
@@ -1278,7 +1300,8 @@ class ApplicationController {
         {
           retrievalElapsedMs: retrieval.elapsedMs,
           retrievalTotalChunks: retrieval.totalChunks
-        }
+        },
+        responseGuidance
       );
       llmResult.metadata = { ...llmResult.metadata, messageId };
 
@@ -1339,7 +1362,6 @@ class ApplicationController {
     }
 
     // Route speech UI events according to the user's response-target setting.
-    sessionManager.addUserInput(fragment, 'speech');
     this.sendToVoiceResponseWindows("transcription-received", { text: fragment });
 
     this._utteranceBuffer = this._utteranceBuffer
@@ -1381,8 +1403,7 @@ class ApplicationController {
     this._utteranceDispatchInFlight = true;
 
     try {
-      const sessionHistory = sessionManager.getOptimizedHistory();
-      await this.processTranscriptionWithLLM(combined, sessionHistory);
+      await this.processTranscriptionWithLLM(combined);
     } catch (error) {
       logger.error("Failed to process transcription with LLM", {
         error: error.message,
@@ -1397,7 +1418,7 @@ class ApplicationController {
     }
   }
 
-  async processTranscriptionWithLLM(text, sessionHistory) {
+  async processTranscriptionWithLLM(text) {
     // Hoisted so the catch block can tie a fallback answer to the same UI
     // bubble the streaming start event created; otherwise a total failure
     // leaves an empty streamed bubble stranded next to the fallback message.
@@ -1419,6 +1440,11 @@ class ApplicationController {
         });
         return;
       }
+
+      const conversationalContext = this.getConversationalRequestContext(cleanText);
+
+      // Store only the finalized/coalesced utterance, not each partial speech fragment.
+      sessionManager.addUserInput(cleanText, 'speech');
 
       logger.info("Processing transcription with intelligent LLM response", {
         skill: this.activeSkill,
@@ -1442,17 +1468,45 @@ class ApplicationController {
       if (this.shouldShowVoiceOverlay()) {
         windowManager.showLLMLoading();
       }
+
+      const cachedDocumentChunks = sessionManager.getSessionDocumentChunks();
+      const { continuity, conversationHistory } = conversationalContext;
+      const retrieval = knowledgeRetrievalService.retrieve(cleanText, cachedDocumentChunks, {
+        followUpContext: continuity
+      });
+      const classification = responseGuidanceService.classify({
+        question: cleanText,
+        followUpUsed: retrieval.followUpUsed,
+        hasProfile: !!this.activeProfile,
+        hasKnowledge: retrieval.selectedChunks.length > 0,
+        hasCandidateEvidence: retrieval.selectedChunks.some(
+          chunk => chunk.evidenceType === 'candidate'
+        ),
+        hasReferenceEvidence: retrieval.selectedChunks.some(
+          chunk => chunk.evidenceType === 'reference'
+        )
+      });
+      const responseGuidance = responseGuidanceService.buildGuidance(classification, {
+        continuity: retrieval.followUpUsed ? continuity : null
+      });
       const llmResult = await llmService.processTranscriptionWithIntelligentResponseStream(
         cleanText,
         this.activeSkill,
-        sessionHistory.recent,
+        this.activeProfile,
+        conversationHistory,
         needsProgrammingLanguage ? this.codingLanguage : null,
         (delta) => {
           this.sendToVoiceResponseWindows("transcription-llm-response-chunk", {
             messageId,
             delta
           });
-        }
+        },
+        retrieval.selectedChunks,
+        {
+          retrievalElapsedMs: retrieval.elapsedMs,
+          retrievalTotalChunks: retrieval.totalChunks
+        },
+        responseGuidance
       );
       llmResult.metadata = { ...llmResult.metadata, messageId };
 
@@ -1688,7 +1742,26 @@ class ApplicationController {
     return this._whisperInstaller;
   }
 
-  async addSessionDocuments() {
+  getConversationalRequestContext(currentQuestion) {
+    const continuity = responseGuidanceService.createContinuity(
+      sessionManager.getConversationHistory(10),
+      currentQuestion
+    );
+    if (!continuity) {
+      return Object.freeze({ continuity: null, conversationHistory: Object.freeze([]) });
+    }
+
+    return Object.freeze({
+      continuity,
+      conversationHistory: Object.freeze([
+        Object.freeze({ role: 'user', content: continuity.previousQuestion }),
+        Object.freeze({ role: 'model', content: continuity.previousAnswer })
+      ])
+    });
+  }
+
+  async addSessionDocuments(evidenceType = "unknown") {
+    const normalizedEvidenceType = normalizeSessionEvidenceType(evidenceType);
     const pickerOptions = {
       title: "Add Session Documents",
       properties: ["openFile", "multiSelections"],
@@ -1770,7 +1843,8 @@ class ApplicationController {
           name,
           extension,
           sizeBytes,
-          content: extraction.content
+          content: extraction.content,
+          evidenceType: normalizedEvidenceType
         });
         added.push(summary);
         const logDetails = {
@@ -1814,7 +1888,7 @@ class ApplicationController {
     };
   }
 
-  async addSessionUrl(url) {
+  async addSessionUrl(url, evidenceType = "unknown") {
     if (typeof url !== "string" || !url.trim()) {
       throw new Error("Enter a public webpage URL");
     }
@@ -1824,7 +1898,8 @@ class ApplicationController {
       name: extraction.name,
       extension: extraction.extension,
       sizeBytes: extraction.sizeBytes,
-      content: extraction.content
+      content: extraction.content,
+      evidenceType: normalizeSessionEvidenceType(evidenceType)
     });
     logger.info("Session URL added", {
       hostname: extraction.metadata.hostname,

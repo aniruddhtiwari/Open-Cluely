@@ -321,7 +321,8 @@ class LLMService {
     sessionMemory = [],
     programmingLanguage = null,
     selectedChunks = [],
-    retrievalMetadata = {}
+    retrievalMetadata = {},
+    responseGuidance = ''
   ) {
     if (!this.isInitialized) {
       throw new Error('LLM service not initialized. Check Gemini API key configuration.');
@@ -347,7 +348,8 @@ class LLMService {
         activeProfile,
         sessionMemory,
         programmingLanguage,
-        selectedChunks
+        selectedChunks,
+        responseGuidance
       );
       const geminiRequest = builtRequest.request;
       knowledgeMetadata = this.createKnowledgeMetadata(
@@ -438,7 +440,8 @@ class LLMService {
     programmingLanguage = null,
     onDelta = null,
     selectedChunks = [],
-    retrievalMetadata = {}
+    retrievalMetadata = {},
+    responseGuidance = ''
   ) {
     if (!this.isInitialized) {
       throw new Error('LLM service not initialized. Check Gemini API key configuration.');
@@ -454,7 +457,8 @@ class LLMService {
         activeProfile,
         sessionMemory,
         programmingLanguage,
-        selectedChunks
+        selectedChunks,
+        responseGuidance
       );
       const geminiRequest = builtRequest.request;
       const knowledgeMetadata = this.createKnowledgeMetadata(
@@ -504,12 +508,22 @@ class LLMService {
         sessionMemory,
         programmingLanguage,
         selectedChunks,
-        retrievalMetadata
+        retrievalMetadata,
+        responseGuidance
       );
     }
   }
 
-  async processTranscriptionWithIntelligentResponse(text, activeSkill, sessionMemory = [], programmingLanguage = null) {
+  async processTranscriptionWithIntelligentResponse(
+    text,
+    activeSkill,
+    activeProfile,
+    sessionMemory = [],
+    programmingLanguage = null,
+    selectedChunks = [],
+    retrievalMetadata = {},
+    responseGuidance = ''
+  ) {
     if (!this.isInitialized) {
       throw new Error('LLM service not initialized. Check Gemini API key configuration.');
     }
@@ -526,7 +540,21 @@ class LLMService {
         requestId: this.requestCount
       });
 
-      const geminiRequest = this.buildIntelligentTranscriptionRequest(text, activeSkill, sessionMemory, programmingLanguage);
+      const builtRequest = this.buildIntelligentTranscriptionRequest(
+        text,
+        activeSkill,
+        activeProfile,
+        sessionMemory,
+        programmingLanguage,
+        selectedChunks,
+        responseGuidance
+      );
+      const geminiRequest = builtRequest.request;
+      const knowledgeMetadata = this.createKnowledgeMetadata(
+        builtRequest.promptMetadata,
+        retrievalMetadata
+      );
+      this.logKnowledgePerformance(knowledgeMetadata);
 
       const preferAlternative = !!config.get('llm.gemini.enableFallbackMethod');
       let response;
@@ -577,7 +605,8 @@ class LLMService {
           processingTime: Date.now() - startTime,
           requestId: this.requestCount,
           usedFallback: false,
-          isTranscriptionResponse: true
+          isTranscriptionResponse: true,
+          ...knowledgeMetadata
         }
       };
     } catch (error) {
@@ -631,13 +660,12 @@ class LLMService {
     activeProfile,
     sessionMemory,
     programmingLanguage,
-    selectedChunks = []
+    selectedChunks = [],
+    responseGuidance = ''
   ) {
-    // Check if we have the new conversation history format
     const sessionManager = require('../managers/session.manager');
-    
-    if (sessionManager && typeof sessionManager.getConversationHistory === 'function') {
-      const conversationHistory = sessionManager.getConversationHistory(15);
+    if (Array.isArray(sessionMemory)) {
+      const conversationHistory = sessionMemory.slice(-15);
       const skillContext = sessionManager.getSkillContext(activeSkill, programmingLanguage);
       return this.buildGeminiRequestWithHistory(
         text,
@@ -646,14 +674,19 @@ class LLMService {
         conversationHistory,
         skillContext,
         programmingLanguage,
-        selectedChunks
+        selectedChunks,
+        responseGuidance
       );
     }
 
-    const combinedSystemPrompt = promptLoader.getCombinedPrompt(
+    const skillAndProfilePrompt = promptLoader.getCombinedPrompt(
       activeSkill,
       activeProfile,
       programmingLanguage
+    );
+    const combinedSystemPrompt = this.composeTextSystemInstruction(
+      responseGuidance,
+      skillAndProfilePrompt
     );
     const promptComponents = promptBuilderService.buildPromptComponents({
       question: text,
@@ -688,7 +721,8 @@ class LLMService {
     conversationHistory,
     skillContext,
     programmingLanguage,
-    selectedChunks = []
+    selectedChunks = [],
+    responseGuidance = ''
   ) {
     const request = {
       contents: []
@@ -699,11 +733,15 @@ class LLMService {
     // Use the skill prompt from context (which may already include programming language)
     const { promptLoader } = require('../../prompt-loader');
 
-    const combinedPrompt = promptLoader.getCombinedPrompt(
+    const skillAndProfilePrompt = promptLoader.getCombinedPrompt(
       activeSkill,
       activeProfile,
       programmingLanguage
     ) || skillContext.skillPrompt || '';
+    const combinedPrompt = this.composeTextSystemInstruction(
+      responseGuidance,
+      skillAndProfilePrompt
+    );
     const promptComponents = promptBuilderService.buildPromptComponents({
       question: text,
       combinedSystemPrompt: combinedPrompt,
@@ -769,6 +807,16 @@ class LLMService {
     return { request, promptMetadata: promptComponents.metadata };
   }
 
+  composeTextSystemInstruction(responseGuidance, skillAndProfilePrompt) {
+    const applicationGuidance = typeof responseGuidance === 'string'
+      ? responseGuidance.trim()
+      : '';
+    const optionalPrompt = typeof skillAndProfilePrompt === 'string'
+      ? skillAndProfilePrompt.trim()
+      : '';
+    return [applicationGuidance, optionalPrompt].filter(Boolean).join('\n\n');
+  }
+
   createKnowledgeMetadata(promptMetadata, retrievalMetadata = {}) {
     return {
       knowledgeUsed: !!(promptMetadata && promptMetadata.usedKnowledge),
@@ -793,20 +841,34 @@ class LLMService {
     });
   }
 
-  buildIntelligentTranscriptionRequest(text, activeSkill, sessionMemory, programmingLanguage) {
+  buildIntelligentTranscriptionRequest(
+    text,
+    activeSkill,
+    activeProfile,
+    sessionMemory = [],
+    programmingLanguage = null,
+    selectedChunks = [],
+    responseGuidance = ''
+  ) {
     // Validate input text first
     const cleanText = text && typeof text === 'string' ? text.trim() : '';
     if (!cleanText) {
       throw new Error('Empty or invalid transcription text provided to buildIntelligentTranscriptionRequest');
     }
 
-    // Check if we have the new conversation history format
     const sessionManager = require('../managers/session.manager');
-    
-    if (sessionManager && typeof sessionManager.getConversationHistory === 'function') {
-      const conversationHistory = sessionManager.getConversationHistory(10);
+    if (Array.isArray(sessionMemory)) {
       const skillContext = sessionManager.getSkillContext(activeSkill, programmingLanguage);
-      return this.buildIntelligentTranscriptionRequestWithHistory(cleanText, activeSkill, conversationHistory, skillContext, programmingLanguage);
+      return this.buildIntelligentTranscriptionRequestWithHistory(
+        cleanText,
+        activeSkill,
+        activeProfile,
+        sessionMemory.slice(-10),
+        skillContext,
+        programmingLanguage,
+        selectedChunks,
+        responseGuidance
+      );
     }
 
     // Fallback to basic intelligent request
@@ -817,16 +879,26 @@ class LLMService {
     this.applyGenerationDefaults(request);
 
     // Add intelligent filtering system instruction
-    const intelligentPrompt = this.getIntelligentTranscriptionPrompt(activeSkill, programmingLanguage);
-    if (intelligentPrompt) {
+    const combinedSystemPrompt = this.composeIntelligentTranscriptionInstruction(
+      activeSkill,
+      activeProfile,
+      programmingLanguage,
+      responseGuidance
+    );
+    const promptComponents = promptBuilderService.buildPromptComponents({
+      question: cleanText,
+      combinedSystemPrompt,
+      selectedChunks
+    });
+    if (promptComponents.systemInstruction) {
       request.systemInstruction = {
-        parts: [{ text: intelligentPrompt }]
+        parts: [{ text: promptComponents.systemInstruction }]
       };
     }
 
     request.contents.push({
       role: 'user',
-      parts: [{ text: cleanText }]
+      parts: [{ text: promptComponents.userMessage }]
     });
 
     logger.debug('Built basic intelligent transcription request', {
@@ -836,21 +908,41 @@ class LLMService {
       hasSystemInstruction: !!request.systemInstruction
     });
 
-    return request;
+    return { request, promptMetadata: promptComponents.metadata };
   }
 
-  buildIntelligentTranscriptionRequestWithHistory(text, activeSkill, activeProfile, conversationHistory, skillContext, programmingLanguage) {
+  buildIntelligentTranscriptionRequestWithHistory(
+    text,
+    activeSkill,
+    activeProfile,
+    conversationHistory,
+    skillContext,
+    programmingLanguage,
+    selectedChunks = [],
+    responseGuidance = ''
+  ) {
     const request = {
       contents: []
     };
 
     this.applyGenerationDefaults(request);
 
-  // For chat/transcription messages, DO NOT include the full skill prompt; use only the intelligent filter prompt
-  const intelligentPrompt = this.getIntelligentTranscriptionPrompt(activeSkill, programmingLanguage);
-  if (intelligentPrompt) {
-    request.systemInstruction = { parts: [{ text: intelligentPrompt }] };
-  }
+    const combinedSystemPrompt = this.composeIntelligentTranscriptionInstruction(
+      activeSkill,
+      activeProfile,
+      programmingLanguage,
+      responseGuidance
+    );
+    const promptComponents = promptBuilderService.buildPromptComponents({
+      question: text,
+      combinedSystemPrompt,
+      selectedChunks
+    });
+    if (promptComponents.systemInstruction) {
+      request.systemInstruction = {
+        parts: [{ text: promptComponents.systemInstruction }]
+      };
+    }
 
     // Add recent conversation history (excluding system messages) with validation
     const conversationContents = conversationHistory
@@ -886,7 +978,7 @@ class LLMService {
 
     request.contents.push({
       role: 'user',
-      parts: [{ text: cleanText }]
+      parts: [{ text: promptComponents.userMessage }]
     });
 
     // Ensure we have at least one content item
@@ -904,7 +996,24 @@ class LLMService {
       requiresProgrammingLanguage: skillContext.requiresProgrammingLanguage || false
     });
 
-    return request;
+    return { request, promptMetadata: promptComponents.metadata };
+  }
+
+  composeIntelligentTranscriptionInstruction(
+    activeSkill,
+    activeProfile,
+    programmingLanguage,
+    responseGuidance = ''
+  ) {
+    const intelligentPrompt = this.getIntelligentTranscriptionPrompt(activeSkill, programmingLanguage);
+    const skillAndProfilePrompt = promptLoader.getCombinedPrompt(
+      activeSkill,
+      activeProfile,
+      programmingLanguage
+    );
+    return [intelligentPrompt, responseGuidance, skillAndProfilePrompt]
+      .filter(Boolean)
+      .join('\n\n');
   }
 
   getIntelligentTranscriptionPrompt(activeSkill, programmingLanguage) {
@@ -915,7 +1024,10 @@ Determine whether the transcript contains an actual question or request.
 - Answer substantive questions and requests naturally, directly, and with appropriate brevity.
 - Do not assume any particular skill, profession, or subject domain.
 - Avoid responding unnecessarily to obvious filler, accidental fragments, or background noise when no meaningful response is needed.
-- Do not repeat the transcript or add unrelated information.`;
+- Do not repeat the transcript or add unrelated information.
+- When current-turn reference knowledge supports a question about the user's background, experience, qualifications, or projects, answer naturally from the candidate's first-person perspective using only supported facts.
+- Do not claim to be an AI or language model when answering on the candidate's behalf. If candidate facts are unavailable, do not invent them.
+- Answer general technical questions neutrally unless the question asks how the candidate used the technology and the supplied knowledge supports that experience.`;
 
       if (programmingLanguage) {
         const lang = String(programmingLanguage).toLowerCase();
@@ -1129,7 +1241,17 @@ Remember: Be intelligent about filtering - only provide detailed responses when 
    * {response, metadata} shape. Falls back to the non-streaming path on any
    * streaming failure so reliability is never worse than before.
    */
-  async processTranscriptionWithIntelligentResponseStream(text, activeSkill, sessionMemory = [], programmingLanguage = null, onDelta = null) {
+  async processTranscriptionWithIntelligentResponseStream(
+    text,
+    activeSkill,
+    activeProfile,
+    sessionMemory = [],
+    programmingLanguage = null,
+    onDelta = null,
+    selectedChunks = [],
+    retrievalMetadata = {},
+    responseGuidance = ''
+  ) {
     if (!this.isInitialized) {
       throw new Error('LLM service not initialized. Check Gemini API key configuration.');
     }
@@ -1138,7 +1260,21 @@ Remember: Be intelligent about filtering - only provide detailed responses when 
     this.requestCount++;
 
     try {
-      const geminiRequest = this.buildIntelligentTranscriptionRequest(text, activeSkill, sessionMemory, programmingLanguage);
+      const builtRequest = this.buildIntelligentTranscriptionRequest(
+        text,
+        activeSkill,
+        activeProfile,
+        sessionMemory,
+        programmingLanguage,
+        selectedChunks,
+        responseGuidance
+      );
+      const geminiRequest = builtRequest.request;
+      const knowledgeMetadata = this.createKnowledgeMetadata(
+        builtRequest.promptMetadata,
+        retrievalMetadata
+      );
+      this.logKnowledgePerformance(knowledgeMetadata);
 
       const fullText = await this.executeStreamingRequest(geminiRequest, (delta) => {
         if (typeof onDelta === 'function' && delta) {
@@ -1166,7 +1302,8 @@ Remember: Be intelligent about filtering - only provide detailed responses when 
           requestId: this.requestCount,
           usedFallback: false,
           streamed: true,
-          isTranscriptionResponse: true
+          isTranscriptionResponse: true,
+          ...knowledgeMetadata
         }
       };
     } catch (error) {
@@ -1176,7 +1313,16 @@ Remember: Be intelligent about filtering - only provide detailed responses when 
       });
       // Non-streaming path returns the same shape; the caller renders it as a
       // single final response.
-      return this.processTranscriptionWithIntelligentResponse(text, activeSkill, sessionMemory, programmingLanguage);
+      return this.processTranscriptionWithIntelligentResponse(
+        text,
+        activeSkill,
+        activeProfile,
+        sessionMemory,
+        programmingLanguage,
+        selectedChunks,
+        retrievalMetadata,
+        responseGuidance
+      );
     }
   }
 

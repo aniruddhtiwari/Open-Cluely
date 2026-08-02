@@ -7,6 +7,7 @@ const MAX_SESSION_DOCUMENT_CONTENT_CHARACTERS = 2000000;
 const SESSION_DOCUMENT_CHUNK_TARGET_CHARACTERS = 1500;
 const SESSION_DOCUMENT_CHUNK_MIN_CHARACTERS = 750;
 const SESSION_DOCUMENT_CHUNK_MAX_CHARACTERS = 2000;
+const SESSION_DOCUMENT_EVIDENCE_TYPES = new Set(['candidate', 'job', 'reference', 'unknown']);
 
 class SessionManager {
   constructor() {
@@ -205,8 +206,14 @@ class SessionManager {
     }
 
     const name = document.name.trim();
+    const evidenceType = document.evidenceType === undefined || document.evidenceType === null
+      ? 'unknown'
+      : String(document.evidenceType).trim().toLowerCase();
+    if (!SESSION_DOCUMENT_EVIDENCE_TYPES.has(evidenceType)) {
+      throw new Error('Session document evidenceType must be candidate, job, reference, or unknown');
+    }
     const chunks = Object.freeze(
-      this.createSessionDocumentChunks(id, name, normalizedContent)
+      this.createSessionDocumentChunks(id, name, normalizedContent, evidenceType)
     );
 
     const storedDocument = Object.freeze({
@@ -216,6 +223,7 @@ class SessionManager {
       sizeBytes: document.sizeBytes,
       content: normalizedContent,
       addedAt,
+      evidenceType,
       chunks
     });
 
@@ -233,7 +241,8 @@ class SessionManager {
       extension: document.extension,
       sizeBytes: document.sizeBytes,
       content: document.content,
-      addedAt: document.addedAt
+      addedAt: document.addedAt,
+      evidenceType: document.evidenceType
     }));
   }
 
@@ -246,7 +255,8 @@ class SessionManager {
       name: document.name,
       extension: document.extension,
       sizeBytes: document.sizeBytes,
-      addedAt: document.addedAt
+      addedAt: document.addedAt,
+      evidenceType: document.evidenceType || 'unknown'
     }));
   }
 
@@ -259,6 +269,7 @@ class SessionManager {
         id: chunk.id,
         documentId: chunk.documentId,
         documentName: chunk.documentName,
+        evidenceType: chunk.evidenceType,
         index: chunk.index,
         content: chunk.content,
         normalizedContent: chunk.normalizedContent,
@@ -306,7 +317,7 @@ class SessionManager {
   /**
    * Split normalized document content once at upload time.
    */
-  createSessionDocumentChunks(documentId, documentName, content) {
+  createSessionDocumentChunks(documentId, documentName, content, evidenceType = 'unknown') {
     if (!content) return [];
 
     const chunks = [];
@@ -347,6 +358,7 @@ class SessionManager {
           id: this.generateEventId(),
           documentId,
           documentName,
+          evidenceType,
           index,
           content: chunkContent,
           ...retrievalData
