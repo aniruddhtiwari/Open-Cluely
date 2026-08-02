@@ -11,6 +11,7 @@ class MainWindowUI {
         this.isInteractive = false;
         this.isHidden = false;
         this.currentSkill = '';
+        this.codingLanguage = '';
         this.statusDot = null;
         this.skillIndicator = null;
         this.recordButton = null;
@@ -75,6 +76,7 @@ class MainWindowUI {
             ]);
             this.availableSkills = options.skills.map(item => item.id);
             this.currentSkill = settings.activeSkill || '';
+            this.updateCodingLanguage(settings.codingLanguage || '');
             this.updateOpacityControl(settings.windowOpacity);
         } catch (error) {
             logger.warn('Failed to load prompt controls', {
@@ -147,6 +149,7 @@ class MainWindowUI {
         this.updateStatusDot();
         this.updateSkillIndicatorState();
         this.updateMicButtonState();
+        this.updateCodingLanguageState();
         this.updateSettingsIndicatorState();
     }
 
@@ -223,6 +226,15 @@ class MainWindowUI {
         }
     }
 
+    updateCodingLanguage(language) {
+        this.codingLanguage = typeof language === 'string' ? language : '';
+        if (this.codingLanguageSelect) this.codingLanguageSelect.value = this.codingLanguage;
+    }
+
+    updateCodingLanguageState() {
+        if (this.codingLanguageSelect) this.codingLanguageSelect.disabled = !this.isInteractive;
+    }
+
     updateSettingsIndicatorState() {
         if (this.settingsIndicator) {
             // Remove both classes first
@@ -281,6 +293,7 @@ class MainWindowUI {
         this.recordButton = document.getElementById('recordButton');
         this.aiResponseButton = document.getElementById('aiResponseButton');
         this.transcriptButton = document.getElementById('transcriptButton');
+        this.codingLanguageSelect = document.getElementById('codingLanguageSelect');
         this.opacityButton = document.getElementById('opacityButton');
         this.opacityPopover = document.getElementById('opacityPopover');
         this.opacitySlider = document.getElementById('topBarOpacity');
@@ -292,7 +305,7 @@ class MainWindowUI {
         const commandItems = document.querySelectorAll('.command-item');
         this.screenshotButton = commandItems && commandItems[0];
 
-    if (!this.statusDot || !this.recordButton || !this.aiResponseButton || !this.transcriptButton || !this.opacityButton || !this.opacitySlider || !this.screenshotButton) {
+    if (!this.statusDot || !this.recordButton || !this.aiResponseButton || !this.transcriptButton || !this.codingLanguageSelect || !this.opacityButton || !this.opacitySlider || !this.screenshotButton) {
             throw new Error('Required UI elements not found');
         }
 
@@ -300,6 +313,18 @@ class MainWindowUI {
         this.screenshotButton.addEventListener('click', () => {
             if (this.isInteractive && window.electronAPI && window.electronAPI.takeScreenshot) {
                 window.electronAPI.takeScreenshot();
+            }
+        });
+
+        this.codingLanguageSelect.addEventListener('change', async event => {
+            if (!this.isInteractive) return;
+            const language = event.target.value;
+            try {
+                await window.electronAPI.saveSettings({ codingLanguage: language });
+            } catch (error) {
+                logger.error('Coding language update failed', { error: error.message });
+                const settings = await window.electronAPI.getSettings();
+                this.updateCodingLanguage(settings.codingLanguage || '');
             }
         });
 
@@ -438,6 +463,12 @@ class MainWindowUI {
             window.electronAPI.onSkillChanged((event, data) => {
                 if (data && Object.prototype.hasOwnProperty.call(data, 'skill')) {
                     this.handleSkillChanged(data);
+                }
+            });
+
+            window.electronAPI.onCodingLanguageChanged((_event, data) => {
+                if (data && Object.prototype.hasOwnProperty.call(data, 'language')) {
+                    this.updateCodingLanguage(data.language || '');
                 }
             });
 

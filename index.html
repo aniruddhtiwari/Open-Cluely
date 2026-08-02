@@ -105,6 +105,17 @@
       #transcriptButton.active i { color: #60a5fa; }
       #recordButton.recording i { color: #ff4757; }
 
+      #languageControl {
+        gap: 4px;
+        padding-left: 5px;
+        padding-right: 5px;
+      }
+      #languageControl select {
+        min-width: 72px;
+        width: 72px;
+        padding-left: 6px;
+      }
+
       .opacity-control { position: relative; }
       .opacity-popover {
         position: absolute;
@@ -398,6 +409,21 @@
         <i class="fas fa-microphone"></i>
         <span>Record</span>
       </div>
+      <div class="command-separator"></div>
+      <label class="command-item" id="languageControl" title="Coding Language">
+        <span>Lang</span>
+        <select id="codingLanguageSelect" aria-label="Coding Language">
+          <option value="">None</option>
+          <option value="sql">SQL</option>
+          <option value="python">Python</option>
+          <option value="pyspark">PySpark</option>
+          <option value="dax">DAX</option>
+          <option value="sql-pyspark-python-dax">Auto-DE</option>
+          <option value="java">Java</option>
+          <option value="cpp">C++</option>
+          <option value="c">C</option>
+        </select>
+      </label>
       <div class="command-separator"></div>
       <div class="command-item opacity-control" id="opacityButton" title="AI Response opacity">
         <i class="fas fa-circle-half-stroke"></i>
