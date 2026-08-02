@@ -135,15 +135,11 @@ class ApplicationController {
   constructor() {
     this.isReady = false;
     this.starting = false;
-    this.activeSkill = resolveAvailablePromptId(
-      promptLoader.getAvailableSkills(),
-      process.env.ACTIVE_SKILL
-    );
-    this.activeProfile = resolveAvailablePromptId(
-      promptLoader.getAvailableProfiles(),
-      process.env.ACTIVE_PROFILE
-    );
-    this.codingLanguage = process.env.CODING_LANGUAGE || "";
+    // Interview presets are session controls. Start every app session without
+    // assumptions, even if older versions persisted values in .env.
+    this.activeSkill = "";
+    this.activeProfile = "";
+    this.codingLanguage = "";
     this.speechAvailable = false;
 
     // Utterance coalescing: VAD emits a transcript per natural pause, but a
@@ -638,6 +634,16 @@ class ApplicationController {
       return { success: true };
     });
 
+    ipcMain.handle("toggle-chat-window", () => {
+      const chatWindow = windowManager.getWindow("chat");
+      if (chatWindow && !chatWindow.isDestroyed() && chatWindow.isVisible()) {
+        windowManager.hideChatWindow();
+        return { visible: false };
+      }
+      windowManager.showChatWindow();
+      return { visible: true };
+    });
+
     ipcMain.on("acknowledge-telemetry-render", (event, { interactionId, target } = {}) => {
       sessionTelemetryManager.acknowledgeFirstRender(interactionId, target);
     });
@@ -1107,7 +1113,6 @@ class ApplicationController {
     } else {
       try {
         speechService.startRecording();
-        windowManager.showChatWindow();
         logger.info("Speech recognition started via global shortcut");
       } catch (error) {
         logger.error("Error starting speech recognition:", error);
@@ -2043,9 +2048,9 @@ class ApplicationController {
   }
 
   getSettings() {
-    // Surface every value the settings UI can edit, reading the live source
-    // of truth (process.env) so the UI shows exactly what the running app is
-    // using. Empty strings are returned rather than skipped so the UI can
+    // Surface every value the settings UI can edit. Session controls come
+    // from this controller; provider configuration comes from process.env.
+    // Empty strings are returned rather than skipped so the UI can
     // distinguish "unset" from "stale value from a previous load".
     return {
       codingLanguage: this.codingLanguage || "",
@@ -2119,15 +2124,6 @@ class ApplicationController {
       // Writing to .env ensures they survive app restarts and are picked
       // up the next time the app boots.
       const envUpdates = {};
-      if (Object.prototype.hasOwnProperty.call(settings, "codingLanguage")) {
-        envUpdates.CODING_LANGUAGE = this.codingLanguage;
-      }
-      if (Object.prototype.hasOwnProperty.call(settings, "activeSkill")) {
-        envUpdates.ACTIVE_SKILL = this.activeSkill || "";
-      }
-      if (Object.prototype.hasOwnProperty.call(settings, "activeProfile")) {
-        envUpdates.ACTIVE_PROFILE = this.activeProfile || "";
-      }
       if (settings.speechProvider === "azure" || settings.speechProvider === "whisper") {
         envUpdates.SPEECH_PROVIDER = settings.speechProvider;
       }

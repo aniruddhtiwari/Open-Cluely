@@ -851,7 +851,6 @@
     <div class="chat-container" id="chatContainer">
       <div class="chat-header">
         <div class="header-title">
-          <i class="fas fa-microphone"></i>
           Live Transcription & Chat
           <div class="recording-indicator" id="recordingIndicator"></div>
         </div>
@@ -908,9 +907,6 @@
           <button class="attachment-button" id="showSessionUrlBtn" type="button" title="Add public URL" aria-label="Add public URL">
             <i class="fas fa-link"></i>
           </button>
-          <button class="mic-button" id="micButton">
-            <i class="fas fa-microphone"></i>
-          </button>
           <button class="send-button" id="sendButton">
             <i class="fas fa-paper-plane"></i>
           </button>
@@ -935,7 +931,6 @@
       const recordingIndicator = document.getElementById('recordingIndicator');
       const messageInput = document.getElementById('messageInput');
       const sendButton = document.getElementById('sendButton');
-      const micButton = document.getElementById('micButton');
       const chatContainer = document.getElementById('chatContainer');
       const listeningIndicator = document.getElementById('listeningIndicator');
       const listeningDuration = document.getElementById('listeningDuration');
@@ -1119,21 +1114,13 @@
         }
       }
 
-      function applyMicVisibility() {
-        if (micButton) {
-          micButton.style.display = speechAvailable ? '' : 'none';
-        }
-      }
-      
       async function initSpeechAvailability() {
         try {
           if (window.electronAPI && window.electronAPI.getSpeechAvailability) {
             speechAvailable = await window.electronAPI.getSpeechAvailability();
-            applyMicVisibility();
           }
         } catch (e) {
           speechAvailable = false;
-          applyMicVisibility();
         }
       }
 
@@ -1410,9 +1397,6 @@
         if (recordingIndicator) {
           recordingIndicator.style.display = 'block';
         }
-        if (micButton) {
-          micButton.classList.add('recording');
-        }
 
         showListeningAnimation();
       }
@@ -1422,9 +1406,6 @@
 
         if (recordingIndicator) {
           recordingIndicator.style.display = 'none';
-        }
-        if (micButton) {
-          micButton.classList.remove('recording');
         }
 
         hideListeningAnimation();
@@ -1866,33 +1847,6 @@
         });
       }
 
-      if (micButton) {
-        micButton.addEventListener('click', async () => {
-          if (!isInteractive) {
-            addMessage('Window is in non-interactive mode. Press Alt+A to enable interaction.', 'error');
-            return;
-          }
-          if (!speechAvailable) {
-            addMessage('Speech recognition is not configured.', 'system');
-            return;
-          }
-
-          try {
-            if (isRecording) {
-              if (whysperAPI) {
-                const result = await whysperAPI.stopSpeechRecognition();
-              }
-            } else {
-              if (whysperAPI) {
-                const result = await whysperAPI.startSpeechRecognition();
-              }
-            }
-          } catch (error) {
-            addMessage("Error in recognizing speech", 'error');
-          }
-        });
-      }
-
       if (sendButton) {
         sendButton.addEventListener('click', async () => {
           const text = messageInput.value.trim();
@@ -1952,15 +1906,6 @@
           // If Shift+Enter, allow default to insert newline
         });
       }
-
-      // Global keyboard shortcuts
-      document.addEventListener('keydown', (e) => {
-        if (e.altKey && e.key === 'r') {
-          e.preventDefault();
-          if (!isInteractive || !speechAvailable) return;
-          micButton && micButton.click();
-        }
-      });
 
       // Initialize
       if (!chatHistory || chatHistory.length === 0) {

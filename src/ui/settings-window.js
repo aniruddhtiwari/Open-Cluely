@@ -186,6 +186,16 @@ document.addEventListener('DOMContentLoaded', () => {
                 console.log('Language updated from overlay window:', data.language);
             }
     });
+        window.electronAPI.receive('skill-updated', (_event, data) => {
+            if (activeSkillSelect && data && Object.prototype.hasOwnProperty.call(data, 'skill')) {
+                activeSkillSelect.value = data.skill || '';
+            }
+        });
+        window.electronAPI.receive('profile-updated', (_event, data) => {
+            if (activeProfileSelect && data && Object.prototype.hasOwnProperty.call(data, 'profile')) {
+                activeProfileSelect.value = data.profile || '';
+            }
+        });
     }
 
     // Save settings helper function

@@ -27,8 +27,8 @@
         display: flex;
         align-items: center;
         justify-content: center;
-        gap: 16px;
-        padding: 0 12px;
+        gap: 6px;
+        padding: 0 8px;
         color: rgba(255, 255, 255, 0.9);
         font-size: 11px;
         font-weight: 600;
@@ -44,8 +44,8 @@
       .command-item {
         display: flex;
         align-items: center;
-        gap: 8px;
-        padding: 6px 10px;
+        gap: 5px;
+        padding: 4px 7px;
         border-radius: 6px;
         color: rgba(255, 255, 255, 0.9);
         font-size: 12px;
@@ -102,6 +102,18 @@
         color: #93c5fd;
         box-shadow: 0 0 0 1px rgba(96, 165, 250, 0.25) inset;
       }
+
+      .preset-control {
+        gap: 4px;
+      }
+
+      .preset-control label {
+        color: rgba(255, 255, 255, 0.65);
+        font-size: 10px;
+      }
+
+      #transcriptButton.active i { color: #60a5fa; }
+      #recordButton.recording i { color: #ff4757; }
 
       .command-separator {
         width: 1px;
@@ -358,24 +370,39 @@
         <span>⌘⇧S</span>
       </div>
       <div class="command-separator"></div>
-      <div class="command-item" id="micButton">
+      <div class="command-item" id="transcriptButton" title="Show Live Transcript & Chat">
+        <i class="fas fa-message"></i>
+        <span>Transcript</span>
+      </div>
+      <div class="command-separator"></div>
+      <div class="command-item" id="recordButton" title="Start Voice Recording">
         <i class="fas fa-microphone"></i>
+        <span>Record</span>
       </div>
       <div class="command-separator"></div>
-      <div class="command-item" id="skillIndicator">
-        <i class="fas fa-brain"></i>
-        <span>DSA</span>
+      <div class="command-item preset-control" id="skillIndicator">
+        <label for="activeSkillTopBar">Skill</label>
+        <select id="activeSkillTopBar"><option value="">None</option></select>
       </div>
-      <div class="command-separator"></div>
-      <div class="command-item" id="languageSelector">
-        <i class="fas fa-code"></i>
+      <div class="command-item preset-control" id="profileSelector">
+        <label for="activeProfileTopBar">Profile</label>
+        <select id="activeProfileTopBar"><option value="">None</option></select>
+      </div>
+      <div class="command-item preset-control" id="languageSelector">
+        <label for="codingLanguage">Language</label>
         <select id="codingLanguage">
+          <option value="">None</option>
           <option value="cpp">C++</option>
           <option value="c">C</option>
           <option value="python">Python</option>
+          <option value="sql-pyspark-python">SQL / PySpark / Python</option>
           <option value="java">Java</option>
           <option value="javascript">JavaScript</option>
         </select>
+      </div>
+      <div class="command-separator"></div>
+      <div class="command-item" id="settingsIndicator" title="Settings">
+        <i class="fas fa-gear"></i>
       </div>
       <div class="command-separator"></div>
       <div class="command-item" id="infoButton" title="Shortcuts">
