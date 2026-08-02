@@ -471,7 +471,7 @@ class MainWindowUI {
             
             // Global keyboard shortcuts
             document.addEventListener('keydown', (e) => {
-                if (e.altKey && e.key === 'r' && this.isInteractive) {
+                if (e.altKey && e.key === 'm' && this.isInteractive) {
                     e.preventDefault();
                     if (!this.speechAvailable) return; // guard when unavailable
                     if (this.isRecording) {
