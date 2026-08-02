@@ -133,6 +133,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onProfileChanged: (callback) => ipcRenderer.on('profile-changed', callback),
   onAppearanceChanged: (callback) => ipcRenderer.on('appearance-changed', callback),
   onAIResponseVisibilityChanged: (callback) => ipcRenderer.on('ai-response-visibility-changed', callback),
+  onChatWindowVisibilityChanged: (callback) => ipcRenderer.on('chat-window-visibility-changed', callback),
   onMainWindowShown: (callback) => ipcRenderer.on('main-window-shown', callback),
   
   // Generic receive method

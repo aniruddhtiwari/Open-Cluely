@@ -909,12 +909,18 @@ class WindowManager {
         if (type === 'llmResponse') {
           this.broadcastToAllWindows('ai-response-visibility-changed', { visible: true });
         }
+        if (type === 'chat') {
+          this.broadcastToAllWindows('chat-window-visibility-changed', { visible: window.isVisible() });
+        }
       });
 
       window.on('hide', () => {
         logger.debug('Window hidden', { type });
         if (type === 'llmResponse') {
           this.broadcastToAllWindows('ai-response-visibility-changed', { visible: false });
+        }
+        if (type === 'chat') {
+          this.broadcastToAllWindows('chat-window-visibility-changed', { visible: window.isVisible() });
         }
       });
 

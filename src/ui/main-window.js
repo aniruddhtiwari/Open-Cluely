@@ -455,6 +455,11 @@ class MainWindowUI {
             window.electronAPI.onAIResponseVisibilityChanged((_event, state) => {
                 this.updateAIResponseButton(!!(state && state.visible));
             });
+            window.electronAPI.onChatWindowVisibilityChanged((_event, state) => {
+                const visible = !!(state && state.visible);
+                this.transcriptButton.classList.toggle('active', visible);
+                this.transcriptButton.title = visible ? 'Hide Live Transcript & Chat' : 'Show Live Transcript & Chat';
+            });
 
             // Listen for main window shown event to refresh speech availability
             window.electronAPI.onMainWindowShown(() => {
