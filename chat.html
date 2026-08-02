@@ -856,6 +856,9 @@
           <div class="recording-indicator" id="recordingIndicator"></div>
         </div>
         <div class="header-actions">
+          <button class="icon-button" id="exportTranscriptBtn" title="Export transcript" aria-label="Export transcript">
+            <i class="fas fa-download"></i>
+          </button>
           <button class="icon-button" id="clearHistoryBtn" title="Clear chat history">
             <i class="fas fa-trash"></i>
           </button>
@@ -937,6 +940,7 @@
       const listeningIndicator = document.getElementById('listeningIndicator');
       const listeningDuration = document.getElementById('listeningDuration');
       const interimOverlay = document.getElementById('interimOverlay');
+      const exportTranscriptBtn = document.getElementById('exportTranscriptBtn');
       const clearHistoryBtn = document.getElementById('clearHistoryBtn');
       const sessionDocumentStrip = document.getElementById('sessionDocumentStrip');
       const sessionDocumentHeader = document.getElementById('sessionDocumentHeader');
@@ -1108,6 +1112,11 @@
         saveHistory();
         // Clear DOM
         if (chatMessages) chatMessages.innerHTML = '';
+        if (whysperAPI?.clearSessionTelemetry) {
+          whysperAPI.clearSessionTelemetry().catch(error => {
+            console.error('Failed to clear session telemetry:', error);
+          });
+        }
       }
 
       function applyMicVisibility() {
@@ -1573,7 +1582,7 @@
         return pairId;
       }
 
-      function startAssistantStream(messageId) {
+      function startAssistantStream(messageId, interactionId = null) {
         if (!messageId || streamingResponses.has(messageId) || completedMessageIds.has(messageId)) return;
         const pairId = pendingPairIds.shift() || createPairId();
         hideThinkingIndicator(pairId);
@@ -1583,19 +1592,30 @@
           pairId,
           element,
           textDiv: element.querySelector('.message-text'),
-          text: ''
+          text: '',
+          interactionId
         });
       }
 
-      function appendAssistantStream(messageId, delta) {
+      function appendAssistantStream(messageId, delta, interactionId = null) {
         if (!messageId || typeof delta !== 'string') return;
-        if (!streamingResponses.has(messageId)) startAssistantStream(messageId);
+        if (!streamingResponses.has(messageId)) startAssistantStream(messageId, interactionId);
         const stream = streamingResponses.get(messageId);
         if (!stream) return;
+        if (!stream.interactionId && interactionId) stream.interactionId = interactionId;
         const wasNearBottom = isNearMessagesBottom();
+        const isFirstChunk = stream.text.length === 0 && delta.length > 0;
         stream.text += delta;
         renderAssistantText(stream.textDiv, stream.text);
+        if (isFirstChunk) acknowledgeTelemetryRender(stream.interactionId, 'chat');
         scrollMessagesIfNearBottom(wasNearBottom);
+      }
+
+      function acknowledgeTelemetryRender(interactionId, target) {
+        if (!interactionId || !whysperAPI?.acknowledgeTelemetryRender) return;
+        requestAnimationFrame(() => {
+          whysperAPI.acknowledgeTelemetryRender(interactionId, target);
+        });
       }
 
       function completeAssistantStream(messageId, response) {
@@ -1606,8 +1626,10 @@
         if (!stream) return false;
         const finalText = typeof response === 'string' && response.length ? response : stream.text;
         const wasNearBottom = isNearMessagesBottom();
+        const renderedDuringStream = stream.text.length > 0;
         stream.text = finalText;
         renderAssistantText(stream.textDiv, finalText);
+        if (!renderedDuringStream && finalText) acknowledgeTelemetryRender(stream.interactionId, 'chat');
         streamingResponses.delete(messageId);
         completedMessageIds.add(messageId);
 
@@ -1703,11 +1725,13 @@
 
         // Replace transcription LLM handler to store text + snippets
         whysperAPI.onTranscriptionLlmResponseStart((event, data) => {
-          if (data && data.messageId) startAssistantStream(data.messageId);
+          if (data && data.messageId) startAssistantStream(data.messageId, data.interactionId || null);
         });
 
         whysperAPI.onTranscriptionLlmResponseChunk((event, data) => {
-          if (data && data.messageId) appendAssistantStream(data.messageId, data.delta || '');
+          if (data && data.messageId) {
+            appendAssistantStream(data.messageId, data.delta || '', data.interactionId || null);
+          }
         });
 
         whysperAPI.onTranscriptionLlmResponse((event, data) => {
@@ -1724,6 +1748,22 @@
       // UI Event Listeners
       if (clearHistoryBtn) {
         clearHistoryBtn.addEventListener('click', () => clearChatHistory());
+      }
+
+      if (exportTranscriptBtn) {
+        exportTranscriptBtn.addEventListener('click', async () => {
+          exportTranscriptBtn.disabled = true;
+          try {
+            const result = await whysperAPI.exportSessionTelemetry();
+            if (result && !result.success && !result.canceled) {
+              console.warn(result.message || 'Session transcript was not exported');
+            }
+          } catch (error) {
+            console.error('Failed to export session transcript:', error);
+          } finally {
+            exportTranscriptBtn.disabled = false;
+          }
+        });
       }
 
       if (addSessionDocumentsBtn) {

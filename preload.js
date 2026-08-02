@@ -35,6 +35,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getSessionDocuments: () => ipcRenderer.invoke('get-session-documents'),
   removeSessionDocument: (id) => ipcRenderer.invoke('remove-session-document', id),
   clearSessionDocuments: () => ipcRenderer.invoke('clear-session-documents'),
+  exportSessionTelemetry: () => ipcRenderer.invoke('export-session-telemetry'),
+  clearSessionTelemetry: () => ipcRenderer.invoke('clear-session-telemetry'),
+  acknowledgeTelemetryRender: (interactionId, target) =>
+    ipcRenderer.send('acknowledge-telemetry-render', { interactionId, target }),
   
   // Gemini LLM configuration
   setGeminiApiKey: (apiKey) => ipcRenderer.invoke('set-gemini-api-key', apiKey),

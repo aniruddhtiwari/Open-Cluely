@@ -476,6 +476,7 @@
         let scrollableElements = [];
         let initialized = false;
         let streamingMessageId = null;
+        let streamingInteractionId = null;
         let streamingResponse = '';
         
         // Immediate logging to verify script execution
@@ -538,6 +539,7 @@
                 window.electronAPI.onTranscriptionLlmResponseStart((event, data) => {
                     if (!data || !data.messageId) return;
                     streamingMessageId = data.messageId;
+                    streamingInteractionId = data.interactionId || null;
                     streamingResponse = '';
                 });
 
@@ -545,12 +547,14 @@
                     if (!data || !data.messageId || typeof data.delta !== 'string' || !data.delta) return;
                     if (streamingMessageId !== data.messageId) {
                         streamingMessageId = data.messageId;
+                        streamingInteractionId = data.interactionId || null;
                         streamingResponse = '';
                     }
                     const isFirstChunk = streamingResponse.length === 0;
                     streamingResponse += data.delta;
                     if (isFirstChunk) hideLoadingState();
                     displayResponse({ content: streamingResponse }, { resize: false });
+                    if (isFirstChunk) acknowledgeTelemetryRender(streamingInteractionId, 'aiResponse');
                 });
                 
                 // Listen for LLM response
@@ -578,10 +582,14 @@
                             return;
                         }
                         
+                        const renderedDuringStream = streamingResponse.length > 0;
+                        const interactionId = actualData?.metadata?.interactionId || streamingInteractionId;
                         streamingMessageId = null;
+                        streamingInteractionId = null;
                         streamingResponse = '';
                         hideLoadingState();
                         displayResponse(actualData);
+                        if (!renderedDuringStream) acknowledgeTelemetryRender(interactionId, 'aiResponse');
                         setupScrolling();
                         setTimeout(verifyDisplayState, 500);
                         console.log('[LLM-RESPONSE] Handler completed successfully');
@@ -708,6 +716,13 @@
                         });
                 }, 200);
             }
+        }
+
+        function acknowledgeTelemetryRender(interactionId, target) {
+            if (!interactionId || !window.electronAPI?.acknowledgeTelemetryRender) return;
+            requestAnimationFrame(() => {
+                window.electronAPI.acknowledgeTelemetryRender(interactionId, target);
+            });
         }
 
         function setupScrolling() {

@@ -129,6 +129,7 @@ const urlIngestionService = require("./src/services/url-ingestion.service");
 // Managers
 const windowManager = require("./src/managers/window.manager");
 const sessionManager = require("./src/managers/session.manager");
+const sessionTelemetryManager = require("./src/managers/session-telemetry.manager");
 
 class ApplicationController {
   constructor() {
@@ -150,6 +151,7 @@ class ApplicationController {
     // pauses). We buffer fragments and debounce so one question yields one LLM
     // call instead of several slow, half-answered ones.
     this._utteranceBuffer = "";
+    this._utteranceFragments = [];
     this._utteranceTimer = null;
     this._utteranceDispatchInFlight = false;
     this._utteranceCoalesceMs = 800;
@@ -631,8 +633,44 @@ class ApplicationController {
 
     ipcMain.handle("clear-session-memory", () => {
       sessionManager.clear();
+      sessionTelemetryManager.clear();
       windowManager.broadcastToAllWindows("session-cleared");
       return { success: true };
+    });
+
+    ipcMain.on("acknowledge-telemetry-render", (event, { interactionId, target } = {}) => {
+      sessionTelemetryManager.acknowledgeFirstRender(interactionId, target);
+    });
+
+    ipcMain.handle("clear-session-telemetry", () => {
+      return { success: true, removedCount: sessionTelemetryManager.clear() };
+    });
+
+    ipcMain.handle("export-session-telemetry", async () => {
+      if (!sessionTelemetryManager.isEnabled()) {
+        return { success: false, disabled: true, message: "Session telemetry is disabled" };
+      }
+      try {
+        const result = await dialog.showSaveDialog({
+          title: "Export Session Transcript",
+          defaultPath: `opencluely-session-${new Date().toISOString().replace(/[:.]/g, "-")}.md`,
+          filters: [
+            { name: "Markdown", extensions: ["md"] },
+            { name: "JSON", extensions: ["json"] }
+          ]
+        });
+        if (result.canceled || !result.filePath) return { success: false, canceled: true };
+        const isJSON = path.extname(result.filePath).toLowerCase() === ".json";
+        const content = isJSON
+          ? sessionTelemetryManager.exportJSON()
+          : sessionTelemetryManager.exportMarkdown();
+        if (typeof content !== "string") return content;
+        await fs.promises.writeFile(result.filePath, content, "utf8");
+        return { success: true, format: isJSON ? "json" : "markdown" };
+      } catch (error) {
+        logger.error("Failed to export session telemetry", { error: error.message });
+        return { success: false, message: "Unable to export the session transcript" };
+      }
     });
 
     ipcMain.handle("add-session-documents", async (event, evidenceType) => {
@@ -713,9 +751,17 @@ class ApplicationController {
       // behaviour; typed chat goes through processWithLLM so it gets real
       // answers using the active skill prompt and recent conversation history.
       (async () => {
+        const interactionId = sessionTelemetryManager.startInteraction({
+          inputType: "typed",
+          question: typeof text === "string" ? text : "",
+          activeSkill: this.activeSkill,
+          activeProfile: this.activeProfile,
+          codingLanguage: this.codingLanguage
+        });
         try {
-          await this.processWithLLM(text);
+          await this.processWithLLM(text, interactionId);
         } catch (error) {
+          sessionTelemetryManager.failInteraction(interactionId, error);
           logger.error("Failed to process chat message with LLM", {
             error: error.message,
             text: text.substring(0, 100)
@@ -1072,6 +1118,7 @@ class ApplicationController {
   clearSessionMemory() {
     try {
       sessionManager.clear();
+      sessionTelemetryManager.clear();
       windowManager.broadcastToAllWindows("session-cleared");
       logger.info("Session memory cleared via global shortcut");
     } catch (error) {
@@ -1244,7 +1291,14 @@ class ApplicationController {
     }
   }
 
-  async processWithLLM(text) {
+  async processWithLLM(text, existingInteractionId = null) {
+    const interactionId = existingInteractionId || sessionTelemetryManager.startInteraction({
+      inputType: "typed",
+      question: typeof text === "string" ? text : "",
+      activeSkill: this.activeSkill,
+      activeProfile: this.activeProfile,
+      codingLanguage: this.codingLanguage
+    });
     try {
       const conversationalContext = this.getConversationalRequestContext(text);
 
@@ -1259,15 +1313,18 @@ class ApplicationController {
       const messageId = `chat-${Date.now()}-${this._responseSeq}`;
       this.sendToStreamingResponseWindows("transcription-llm-response-start", {
         messageId,
+        interactionId,
         skill: this.activeSkill
       });
       windowManager.showLLMLoading();
 
       const cachedDocumentChunks = sessionManager.getSessionDocumentChunks();
       const { continuity, conversationHistory } = conversationalContext;
+      sessionTelemetryManager.mark(interactionId, "retrievalStartedAt");
       const retrieval = knowledgeRetrievalService.retrieve(text, cachedDocumentChunks, {
         followUpContext: continuity
       });
+      sessionTelemetryManager.mark(interactionId, "retrievalCompletedAt");
       const classification = responseGuidanceService.classify({
         question: text,
         followUpUsed: retrieval.followUpUsed,
@@ -1283,7 +1340,15 @@ class ApplicationController {
       const responseGuidance = responseGuidanceService.buildGuidance(classification, {
         continuity: retrieval.followUpUsed ? continuity : null
       });
+      sessionTelemetryManager.recordRetrieval(interactionId, {
+        responseMode: classification.mode,
+        responseIntent: classification.intent,
+        selectedDocumentIds: retrieval.selectedChunks.map(chunk => chunk.documentId),
+        selectedChunkIds: retrieval.selectedChunks.map(chunk => chunk.id)
+      });
 
+      sessionTelemetryManager.mark(interactionId, "llmRequestStartedAt");
+      let firstChunkRecorded = false;
       const llmResult = await llmService.processTextWithSkillStream(
         text,
         this.activeSkill,
@@ -1291,8 +1356,13 @@ class ApplicationController {
 	conversationHistory,
         needsProgrammingLanguage ? this.codingLanguage : null,
         (delta) => {
+          if (!firstChunkRecorded) {
+            firstChunkRecorded = true;
+            sessionTelemetryManager.recordFirstChunk(interactionId);
+          }
           this.sendToStreamingResponseWindows("transcription-llm-response-chunk", {
             messageId,
+            interactionId,
             delta
           });
         },
@@ -1303,7 +1373,8 @@ class ApplicationController {
         },
         responseGuidance
       );
-      llmResult.metadata = { ...llmResult.metadata, messageId };
+      llmResult.metadata = { ...llmResult.metadata, messageId, interactionId };
+      sessionTelemetryManager.completeInteraction(interactionId, llmResult.response);
 
       logger.info("LLM processing completed, showing response", {
         responseLength: llmResult.response.length,
@@ -1324,11 +1395,13 @@ class ApplicationController {
       this.broadcastTranscriptionLLMResponse(llmResult);
 
       windowManager.showLLMResponse(llmResult.response, {
+        interactionId,
         skill: this.activeSkill,
         processingTime: llmResult.metadata.processingTime,
         usedFallback: llmResult.metadata.usedFallback,
       });
     } catch (error) {
+      sessionTelemetryManager.failInteraction(interactionId, error);
       logger.error("LLM processing failed", {
         error: error.message,
         skill: this.activeSkill,
@@ -1367,6 +1440,7 @@ class ApplicationController {
     this._utteranceBuffer = this._utteranceBuffer
       ? `${this._utteranceBuffer} ${fragment}`
       : fragment;
+    this._utteranceFragments.push(fragment);
 
     if (this._utteranceTimer) {
       clearTimeout(this._utteranceTimer);
@@ -1399,12 +1473,24 @@ class ApplicationController {
     if (!combined) {
       return;
     }
+    const rawTranscription = this._utteranceFragments.join(" ");
     this._utteranceBuffer = "";
+    this._utteranceFragments = [];
     this._utteranceDispatchInFlight = true;
+    const interactionId = sessionTelemetryManager.startInteraction({
+      inputType: "speech",
+      question: combined,
+      rawTranscription,
+      finalTranscription: combined,
+      activeSkill: this.activeSkill,
+      activeProfile: this.activeProfile,
+      codingLanguage: this.codingLanguage
+    });
 
     try {
-      await this.processTranscriptionWithLLM(combined);
+      await this.processTranscriptionWithLLM(combined, rawTranscription, interactionId);
     } catch (error) {
+      sessionTelemetryManager.failInteraction(interactionId, error);
       logger.error("Failed to process transcription with LLM", {
         error: error.message,
         text: combined.substring(0, 100)
@@ -1418,11 +1504,12 @@ class ApplicationController {
     }
   }
 
-  async processTranscriptionWithLLM(text) {
+  async processTranscriptionWithLLM(text, rawTranscription = text, existingInteractionId = null) {
     // Hoisted so the catch block can tie a fallback answer to the same UI
     // bubble the streaming start event created; otherwise a total failure
     // leaves an empty streamed bubble stranded next to the fallback message.
     let messageId = null;
+    let interactionId = existingInteractionId;
     try {
       // Validate input text
       if (!text || typeof text !== 'string' || text.trim().length === 0) {
@@ -1440,6 +1527,16 @@ class ApplicationController {
         });
         return;
       }
+
+      interactionId = interactionId || sessionTelemetryManager.startInteraction({
+        inputType: "speech",
+        question: cleanText,
+        rawTranscription: typeof rawTranscription === "string" ? rawTranscription : cleanText,
+        finalTranscription: cleanText,
+        activeSkill: this.activeSkill,
+        activeProfile: this.activeProfile,
+        codingLanguage: this.codingLanguage
+      });
 
       const conversationalContext = this.getConversationalRequestContext(cleanText);
 
@@ -1463,6 +1560,7 @@ class ApplicationController {
       messageId = `tr-${Date.now()}-${this._responseSeq}`;
       this.sendToVoiceResponseWindows("transcription-llm-response-start", {
         messageId,
+        interactionId,
         skill: this.activeSkill
       });
       if (this.shouldShowVoiceOverlay()) {
@@ -1471,9 +1569,11 @@ class ApplicationController {
 
       const cachedDocumentChunks = sessionManager.getSessionDocumentChunks();
       const { continuity, conversationHistory } = conversationalContext;
+      sessionTelemetryManager.mark(interactionId, "retrievalStartedAt");
       const retrieval = knowledgeRetrievalService.retrieve(cleanText, cachedDocumentChunks, {
         followUpContext: continuity
       });
+      sessionTelemetryManager.mark(interactionId, "retrievalCompletedAt");
       const classification = responseGuidanceService.classify({
         question: cleanText,
         followUpUsed: retrieval.followUpUsed,
@@ -1489,6 +1589,14 @@ class ApplicationController {
       const responseGuidance = responseGuidanceService.buildGuidance(classification, {
         continuity: retrieval.followUpUsed ? continuity : null
       });
+      sessionTelemetryManager.recordRetrieval(interactionId, {
+        responseMode: classification.mode,
+        responseIntent: classification.intent,
+        selectedDocumentIds: retrieval.selectedChunks.map(chunk => chunk.documentId),
+        selectedChunkIds: retrieval.selectedChunks.map(chunk => chunk.id)
+      });
+      sessionTelemetryManager.mark(interactionId, "llmRequestStartedAt");
+      let firstChunkRecorded = false;
       const llmResult = await llmService.processTranscriptionWithIntelligentResponseStream(
         cleanText,
         this.activeSkill,
@@ -1496,8 +1604,13 @@ class ApplicationController {
         conversationHistory,
         needsProgrammingLanguage ? this.codingLanguage : null,
         (delta) => {
+          if (!firstChunkRecorded) {
+            firstChunkRecorded = true;
+            sessionTelemetryManager.recordFirstChunk(interactionId);
+          }
           this.sendToVoiceResponseWindows("transcription-llm-response-chunk", {
             messageId,
+            interactionId,
             delta
           });
         },
@@ -1508,7 +1621,8 @@ class ApplicationController {
         },
         responseGuidance
       );
-      llmResult.metadata = { ...llmResult.metadata, messageId };
+      llmResult.metadata = { ...llmResult.metadata, messageId, interactionId };
+      sessionTelemetryManager.completeInteraction(interactionId, llmResult.response);
 
       // Add LLM response to session memory
       sessionManager.addModelResponse(llmResult.response, {
@@ -1521,6 +1635,7 @@ class ApplicationController {
       this.sendTranscriptionLLMResponseToVoiceTargets(llmResult);
       if (this.shouldShowVoiceOverlay()) {
         windowManager.showLLMResponse(llmResult.response, {
+          interactionId,
           skill: this.activeSkill,
           processingTime: llmResult.metadata.processingTime,
           usedFallback: llmResult.metadata.usedFallback,
@@ -1549,8 +1664,9 @@ class ApplicationController {
         // Carry the streaming messageId so the target replaces the live
         // bubble instead of leaving it stuck and appending a duplicate.
         if (messageId) {
-          fallbackResult.metadata = { ...fallbackResult.metadata, messageId };
+          fallbackResult.metadata = { ...fallbackResult.metadata, messageId, interactionId };
         }
+        sessionTelemetryManager.completeInteraction(interactionId, fallbackResult.response);
 
         sessionManager.addModelResponse(fallbackResult.response, {
           skill: this.activeSkill,
@@ -1563,6 +1679,7 @@ class ApplicationController {
         this.sendTranscriptionLLMResponseToVoiceTargets(fallbackResult);
         if (this.shouldShowVoiceOverlay()) {
           windowManager.showLLMResponse(fallbackResult.response, {
+            interactionId,
             skill: this.activeSkill,
             processingTime: fallbackResult.metadata.processingTime,
             usedFallback: true,
@@ -1575,6 +1692,7 @@ class ApplicationController {
         });
         
       } catch (fallbackError) {
+        sessionTelemetryManager.failInteraction(interactionId, fallbackError);
         logger.error("Fallback response also failed", {
           fallbackError: fallbackError.message
         });
