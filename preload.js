@@ -19,6 +19,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   disableWindowInteraction: () => ipcRenderer.invoke('disable-window-interaction'),
   switchToChat: () => ipcRenderer.invoke('switch-to-chat'),
   toggleChatWindow: () => ipcRenderer.invoke('toggle-chat-window'),
+  toggleAIResponseWindow: () => ipcRenderer.invoke('toggle-ai-response-window'),
   switchToSkills: () => ipcRenderer.invoke('switch-to-skills'),
   resizeWindow: (width, height) => ipcRenderer.invoke('resize-window', { width, height }),
   moveWindow: (deltaX, deltaY) => ipcRenderer.invoke('move-window', { deltaX, deltaY }),
@@ -131,6 +132,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onCodingLanguageChanged: (callback) => ipcRenderer.on('coding-language-changed', callback),
   onProfileChanged: (callback) => ipcRenderer.on('profile-changed', callback),
   onAppearanceChanged: (callback) => ipcRenderer.on('appearance-changed', callback),
+  onAIResponseVisibilityChanged: (callback) => ipcRenderer.on('ai-response-visibility-changed', callback),
   onMainWindowShown: (callback) => ipcRenderer.on('main-window-shown', callback),
   
   // Generic receive method

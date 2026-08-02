@@ -25,6 +25,8 @@ class WindowManager {
     this.isInitialized = false;
     this.isInitializing = false;
     this.isRecording = false;
+    this.isResizingMainWindowContent = false;
+    this.mainWindowContentResizeTimer = null;
     
     // Add debouncing to prevent excessive operations
     this.lastEnforceTime = 0;
@@ -515,7 +517,7 @@ class WindowManager {
 
         // When resized (by user or programmatically), keep bound windows aligned at top
         window.on('resize', () => {
-          if (this.bindWindows) {
+          if (this.bindWindows && !this.isResizingMainWindowContent) {
             this.positionBoundWindows();
           }
         });
@@ -904,10 +906,16 @@ class WindowManager {
 
       window.on('show', () => {
         logger.debug('Window shown', { type });
+        if (type === 'llmResponse') {
+          this.broadcastToAllWindows('ai-response-visibility-changed', { visible: true });
+        }
       });
 
       window.on('hide', () => {
         logger.debug('Window hidden', { type });
+        if (type === 'llmResponse') {
+          this.broadcastToAllWindows('ai-response-visibility-changed', { visible: false });
+        }
       });
 
       // Handle window minimize attempts
@@ -1320,6 +1328,45 @@ class WindowManager {
     const llmWindow = this.windows.get('llmResponse');
     if (llmWindow) {
       llmWindow.hide();
+    }
+  }
+
+  toggleLLMResponseWindow() {
+    const llmWindow = this.windows.get('llmResponse');
+    if (!llmWindow || llmWindow.isDestroyed()) return false;
+
+    if (llmWindow.isVisible()) {
+      llmWindow.hide();
+      return false;
+    }
+
+    llmWindow.show();
+    return true;
+  }
+
+  resizeMainWindowContent(width, height) {
+    const mainWindow = this.windows.get('main');
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+
+    this.isResizingMainWindowContent = true;
+    try {
+      mainWindow.setContentSize(
+        Math.max(1, Math.round(width)),
+        Math.max(1, Math.round(height))
+      );
+    } catch {
+      mainWindow.setSize(
+        Math.max(1, Math.round(width)),
+        Math.max(1, Math.round(height))
+      );
+    } finally {
+      if (this.mainWindowContentResizeTimer) {
+        clearTimeout(this.mainWindowContentResizeTimer);
+      }
+      this.mainWindowContentResizeTimer = setTimeout(() => {
+        this.isResizingMainWindowContent = false;
+        this.mainWindowContentResizeTimer = null;
+      }, 150);
     }
   }
 

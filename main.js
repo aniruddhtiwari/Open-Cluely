@@ -619,13 +619,7 @@ class ApplicationController {
         const minW = 60;
         const maxW = windowManager.windowConfigs?.main?.width || 520;
         const clampedWidth = Math.max(minW, Math.min(maxW, Math.round(width || minW)));
-        try {
-          // Match content size to the DOM so no extra transparent area remains
-          mainWindow.setContentSize(Math.max(1, clampedWidth), Math.max(1, Math.round(height)));
-        } catch (e) {
-          // Fallback in case setContentSize isn’t available on some platform
-          mainWindow.setSize(Math.max(1, clampedWidth), Math.max(1, Math.round(height)));
-        }
+        windowManager.resizeMainWindowContent(clampedWidth, height);
         logger.debug("Main window resized (content)", { width: clampedWidth, height });
       }
       return { success: true };
@@ -667,6 +661,10 @@ class ApplicationController {
       }
       windowManager.showChatWindow();
       return { visible: true };
+    });
+
+    ipcMain.handle("toggle-ai-response-window", () => {
+      return { visible: windowManager.toggleLLMResponseWindow() };
     });
 
     ipcMain.on("acknowledge-telemetry-render", (event, { interactionId, target } = {}) => {

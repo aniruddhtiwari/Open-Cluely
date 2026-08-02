@@ -100,6 +100,8 @@ class MainWindowUI {
                     const transcriptVisible = !!(stats.windows && stats.windows.chat && stats.windows.chat.isVisible);
                     this.transcriptButton.classList.toggle('active', transcriptVisible);
                     this.transcriptButton.title = transcriptVisible ? 'Hide Live Transcript & Chat' : 'Show Live Transcript & Chat';
+                    const aiResponseVisible = !!(stats.windows && stats.windows.llmResponse && stats.windows.llmResponse.isVisible);
+                    this.updateAIResponseButton(aiResponseVisible);
                     logger.debug('Loaded current interaction state', {
                         component: 'MainWindowUI',
                         interactive: this.isInteractive
@@ -277,6 +279,7 @@ class MainWindowUI {
         this.statusDot = document.getElementById('statusDot');
         this.settingsIndicator = document.getElementById('settingsIndicator');
         this.recordButton = document.getElementById('recordButton');
+        this.aiResponseButton = document.getElementById('aiResponseButton');
         this.transcriptButton = document.getElementById('transcriptButton');
         this.opacityButton = document.getElementById('opacityButton');
         this.opacityPopover = document.getElementById('opacityPopover');
@@ -289,7 +292,7 @@ class MainWindowUI {
         const commandItems = document.querySelectorAll('.command-item');
         this.screenshotButton = commandItems && commandItems[0];
 
-    if (!this.statusDot || !this.recordButton || !this.transcriptButton || !this.opacityButton || !this.opacitySlider || !this.screenshotButton) {
+    if (!this.statusDot || !this.recordButton || !this.aiResponseButton || !this.transcriptButton || !this.opacityButton || !this.opacitySlider || !this.screenshotButton) {
             throw new Error('Required UI elements not found');
         }
 
@@ -335,6 +338,16 @@ class MainWindowUI {
                 this.transcriptButton.title = result.visible ? 'Hide Live Transcript & Chat' : 'Show Live Transcript & Chat';
             } catch (error) {
                 logger.error('Transcript toggle failed', { error: error.message });
+            }
+        });
+
+        this.aiResponseButton.addEventListener('click', async () => {
+            if (!this.isInteractive) return;
+            try {
+                const result = await window.electronAPI.toggleAIResponseWindow();
+                this.updateAIResponseButton(result.visible);
+            } catch (error) {
+                logger.error('AI Response toggle failed', { error: error.message });
             }
         });
 
@@ -438,6 +451,9 @@ class MainWindowUI {
             });
             window.electronAPI.onAppearanceChanged((_event, appearance) => {
                 if (appearance) this.updateOpacityControl(appearance.windowOpacity);
+            });
+            window.electronAPI.onAIResponseVisibilityChanged((_event, state) => {
+                this.updateAIResponseButton(!!(state && state.visible));
             });
 
             // Listen for main window shown event to refresh speech availability
@@ -617,6 +633,12 @@ class MainWindowUI {
             component: 'MainWindowUI',
             skill: skillName
         });
+    }
+
+    updateAIResponseButton(visible) {
+        if (!this.aiResponseButton) return;
+        this.aiResponseButton.classList.toggle('active', !!visible);
+        this.aiResponseButton.title = visible ? 'Hide AI Response' : 'Show AI Response';
     }
 
     handleScreenshotRequest() {
