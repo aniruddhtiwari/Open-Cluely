@@ -22,6 +22,13 @@ document.addEventListener('DOMContentLoaded', () => {
 	const activeSkillSelect = document.getElementById('activeSkill');
 	const activeProfileSelect = document.getElementById('activeProfile');
 	const iconGrid = document.getElementById('iconGrid');
+    const windowOpacityInput = document.getElementById('windowOpacity');
+    const windowOpacityValue = document.getElementById('windowOpacityValue');
+    const responseFontSizeInput = document.getElementById('responseFontSize');
+    const responseFontSizeValue = document.getElementById('responseFontSizeValue');
+    const responseTextColorInput = document.getElementById('responseTextColor');
+    const responseBackgroundColorInput = document.getElementById('responseBackgroundColor');
+    const resetAppearanceButton = document.getElementById('resetAppearance');
 
     // Check if window.api exists
     if (!window.api) {
@@ -143,6 +150,12 @@ document.addEventListener('DOMContentLoaded', () => {
         if (whisperSegmentMsInput) whisperSegmentMsInput.value = settings.whisperSegmentMs || '';
         if (geminiKeyInput) geminiKeyInput.value = settings.geminiKey || '';
         if (windowGapInput) windowGapInput.value = settings.windowGap || '';
+        if (windowOpacityInput) windowOpacityInput.value = String(Math.round((settings.windowOpacity || 1) * 100));
+        if (windowOpacityValue) windowOpacityValue.textContent = `${windowOpacityInput.value}%`;
+        if (responseFontSizeInput) responseFontSizeInput.value = String(settings.responseFontSize || 14);
+        if (responseFontSizeValue) responseFontSizeValue.textContent = `${responseFontSizeInput.value}px`;
+        if (responseTextColorInput) responseTextColorInput.value = settings.responseTextColor || '#ffffff';
+        if (responseBackgroundColorInput) responseBackgroundColorInput.value = settings.responseBackgroundColor || '#111827';
 
         if (codingLanguageSelect) {
             codingLanguageSelect.value = settings.codingLanguage || '';
@@ -196,6 +209,15 @@ document.addEventListener('DOMContentLoaded', () => {
                 activeProfileSelect.value = data.profile || '';
             }
         });
+        window.electronAPI.onAppearanceChanged((_event, appearance) => {
+            if (!appearance) return;
+            if (windowOpacityInput) windowOpacityInput.value = String(Math.round(appearance.windowOpacity * 100));
+            if (windowOpacityValue) windowOpacityValue.textContent = `${windowOpacityInput.value}%`;
+            if (responseFontSizeInput) responseFontSizeInput.value = String(appearance.responseFontSize);
+            if (responseFontSizeValue) responseFontSizeValue.textContent = `${responseFontSizeInput.value}px`;
+            if (responseTextColorInput) responseTextColorInput.value = appearance.responseTextColor;
+            if (responseBackgroundColorInput) responseBackgroundColorInput.value = appearance.responseBackgroundColor;
+        });
     }
 
     // Save settings helper function
@@ -216,6 +238,10 @@ document.addEventListener('DOMContentLoaded', () => {
         if (codingLanguageSelect) settings.codingLanguage = codingLanguageSelect.value;
         if (activeSkillSelect) settings.activeSkill = activeSkillSelect.value;
         if (activeProfileSelect) settings.activeProfile = activeProfileSelect.value;
+        if (windowOpacityInput) settings.windowOpacity = Number(windowOpacityInput.value) / 100;
+        if (responseFontSizeInput) settings.responseFontSize = Number(responseFontSizeInput.value);
+        if (responseTextColorInput) settings.responseTextColor = responseTextColorInput.value;
+        if (responseBackgroundColorInput) settings.responseBackgroundColor = responseBackgroundColorInput.value;
         window.api.send('save-settings', settings);
     };
 
@@ -302,10 +328,33 @@ document.addEventListener('DOMContentLoaded', () => {
 	}
 
 	// Profile selection handler
-	if (activeProfileSelect) {
+    if (activeProfileSelect) {
 		activeProfileSelect.addEventListener('change', () => {
         saveSettings();
     });
+    }
+
+    const saveAppearance = () => {
+        if (windowOpacityValue) windowOpacityValue.textContent = `${windowOpacityInput.value}%`;
+        if (responseFontSizeValue) responseFontSizeValue.textContent = `${responseFontSizeInput.value}px`;
+        window.electronAPI.saveSettings({
+            windowOpacity: Number(windowOpacityInput.value) / 100,
+            responseFontSize: Number(responseFontSizeInput.value),
+            responseTextColor: responseTextColorInput.value,
+            responseBackgroundColor: responseBackgroundColorInput.value
+        });
+    };
+    [windowOpacityInput, responseFontSizeInput, responseTextColorInput, responseBackgroundColorInput].forEach(input => {
+        if (input) input.addEventListener('input', saveAppearance);
+    });
+    if (resetAppearanceButton) {
+        resetAppearanceButton.addEventListener('click', () => {
+            windowOpacityInput.value = '100';
+            responseFontSizeInput.value = '14';
+            responseTextColorInput.value = '#ffffff';
+            responseBackgroundColorInput.value = '#111827';
+            saveAppearance();
+        });
     }
 
     updateSpeechFieldStates();

@@ -35,8 +35,7 @@ class MainWindowUI {
             this.setupElements();
             this.setupEventListeners();
             
-            // Load current skill from settings
-            await this.loadPromptControls();
+            await this.loadSettingsState();
             
             // Load current interaction state
             await this.loadCurrentInteractionState();
@@ -68,19 +67,15 @@ class MainWindowUI {
         }
     }
 
-    async loadPromptControls() {
+    async loadSettingsState() {
         try {
             const [settings, options] = await Promise.all([
                 window.electronAPI.getSettings(),
                 window.electronAPI.getAvailablePromptOptions()
             ]);
-            this.populateSelect(this.skillSelect, options.skills, 'None');
-            this.populateSelect(this.profileSelect, options.profiles, 'None');
             this.availableSkills = options.skills.map(item => item.id);
             this.currentSkill = settings.activeSkill || '';
-            this.skillSelect.value = this.currentSkill;
-            this.profileSelect.value = settings.activeProfile || '';
-            this.languageSelect.value = settings.codingLanguage || '';
+            this.updateOpacityControl(settings.windowOpacity);
         } catch (error) {
             logger.warn('Failed to load prompt controls', {
                 component: 'MainWindowUI',
@@ -89,12 +84,10 @@ class MainWindowUI {
         }
     }
 
-    populateSelect(select, items, emptyLabel) {
-        if (!select) return;
-        select.replaceChildren(new Option(emptyLabel, ''));
-        (Array.isArray(items) ? items : []).forEach(item => {
-            select.appendChild(new Option(item.name, item.id));
-        });
+    updateOpacityControl(value) {
+        const opacity = Math.round((Number(value) || 1) * 100);
+        if (this.opacitySlider) this.opacitySlider.value = String(opacity);
+        if (this.opacityPercent) this.opacityPercent.textContent = `${opacity}%`;
     }
 
     async loadCurrentInteractionState() {
@@ -264,6 +257,10 @@ class MainWindowUI {
                     // popover is positioned below the bar (top:36px), add that plus its height and a small margin
                     height = Math.max(height, Math.ceil(36 + popRect.height + 8));
                 }
+                if (this.opacityPopover && this.opacityPopover.classList.contains('is-open')) {
+                    const popRect = this.opacityPopover.getBoundingClientRect();
+                    height = Math.max(height, Math.ceil(34 + popRect.height + 8));
+                }
                 
                 logger.debug('Resizing window to content', {
                     width,
@@ -278,13 +275,13 @@ class MainWindowUI {
 
     setupElements() {
         this.statusDot = document.getElementById('statusDot');
-        this.skillIndicator = document.getElementById('skillIndicator');
         this.settingsIndicator = document.getElementById('settingsIndicator');
         this.recordButton = document.getElementById('recordButton');
         this.transcriptButton = document.getElementById('transcriptButton');
-        this.skillSelect = document.getElementById('activeSkillTopBar');
-        this.profileSelect = document.getElementById('activeProfileTopBar');
-        this.languageSelect = document.getElementById('codingLanguage');
+        this.opacityButton = document.getElementById('opacityButton');
+        this.opacityPopover = document.getElementById('opacityPopover');
+        this.opacitySlider = document.getElementById('topBarOpacity');
+        this.opacityPercent = document.getElementById('opacityPercent');
     this.infoButton = document.getElementById('infoButton');
     this.shortcutsPopover = document.getElementById('shortcutsPopover');
 
@@ -292,7 +289,7 @@ class MainWindowUI {
         const commandItems = document.querySelectorAll('.command-item');
         this.screenshotButton = commandItems && commandItems[0];
 
-    if (!this.statusDot || !this.recordButton || !this.transcriptButton || !this.skillSelect || !this.profileSelect || !this.languageSelect || !this.screenshotButton) {
+    if (!this.statusDot || !this.recordButton || !this.transcriptButton || !this.opacityButton || !this.opacitySlider || !this.screenshotButton) {
             throw new Error('Required UI elements not found');
         }
 
@@ -303,11 +300,22 @@ class MainWindowUI {
             }
         });
 
-        this.skillSelect.addEventListener('change', event => {
-            window.electronAPI.saveSettings({ activeSkill: event.target.value });
+        this.opacityButton.addEventListener('click', event => {
+            event.stopPropagation();
+            this.opacityPopover.classList.toggle('is-open');
+            this.resizeWindowToContent();
         });
-        this.profileSelect.addEventListener('change', event => {
-            window.electronAPI.saveSettings({ activeProfile: event.target.value });
+        this.opacityPopover.addEventListener('click', event => event.stopPropagation());
+        this.opacitySlider.addEventListener('input', event => {
+            const opacity = Number(event.target.value) / 100;
+            this.updateOpacityControl(opacity);
+            window.electronAPI.saveSettings({ windowOpacity: opacity });
+        });
+        document.addEventListener('click', () => {
+            if (this.opacityPopover.classList.contains('is-open')) {
+                this.opacityPopover.classList.remove('is-open');
+                this.resizeWindowToContent();
+            }
         });
 
         // Check for required elements (settingsIndicator is optional)
@@ -353,23 +361,6 @@ class MainWindowUI {
                 this.loadSpeechAvailability();
             }
         });
-
-        if (this.languageSelect) {
-            this.languageSelect.addEventListener('change', (e) => {
-                const lang = e.target.value;
-                if (window.electronAPI && window.electronAPI.saveSettings) {
-                    window.electronAPI.saveSettings({ codingLanguage: lang });
-                }
-                // Resize for any width change
-                setTimeout(() => {
-                    const commandTab = document.querySelector('.command-tab');
-                    if (commandTab && window.electronAPI && window.electronAPI.resizeWindow) {
-                        const rect = commandTab.getBoundingClientRect();
-                        window.electronAPI.resizeWindow(Math.ceil(rect.width), Math.ceil(rect.height));
-                    }
-                }, 50);
-            });
-        }
 
         // Info button / shortcuts popover
         if (this.infoButton && this.shortcutsPopover) {
@@ -442,28 +433,11 @@ class MainWindowUI {
                 this.applyMicVisibility();
             });
 
-            // Listen for coding language changes from other windows
-            window.electronAPI.onCodingLanguageChanged((event, data) => {
-                if (data && Object.prototype.hasOwnProperty.call(data, 'language') && this.languageSelect) {
-                    // avoid clobbering if same value
-                    if (this.languageSelect.value !== data.language) {
-                        this.languageSelect.value = data.language;
-                    }
-                    logger.debug('Language updated from other window', {
-                        component: 'MainWindowUI',
-                        language: data.language
-                    });
-                }
-            });
-
             window.electronAPI.receive('skill-updated', (_event, data) => {
                 if (data && Object.prototype.hasOwnProperty.call(data, 'skill')) this.handleSkillChanged(data);
             });
-            window.electronAPI.receive('profile-updated', (_event, data) => {
-                if (data && Object.prototype.hasOwnProperty.call(data, 'profile')) this.profileSelect.value = data.profile || '';
-            });
-            window.electronAPI.onProfileChanged((_event, data) => {
-                if (data && Object.prototype.hasOwnProperty.call(data, 'profile')) this.profileSelect.value = data.profile || '';
+            window.electronAPI.onAppearanceChanged((_event, appearance) => {
+                if (appearance) this.updateOpacityControl(appearance.windowOpacity);
             });
 
             // Listen for main window shown event to refresh speech availability

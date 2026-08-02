@@ -6,6 +6,24 @@ const { app, BrowserWindow, dialog, globalShortcut, session, ipcMain } = require
 const MAX_SESSION_DOCUMENT_FILE_SIZE_BYTES = 10 * 1024 * 1024;
 const ALLOWED_SESSION_DOCUMENT_EXTENSIONS = new Set([".txt", ".md", ".markdown", ".docx", ".pdf", ".pptx", ".csv", ".xlsx", ".xls"]);
 const ALLOWED_SESSION_EVIDENCE_TYPES = new Set(["candidate", "job", "reference", "unknown"]);
+const DEFAULT_APPEARANCE = Object.freeze({
+  windowOpacity: 1,
+  responseFontSize: 14,
+  responseTextColor: "#ffffff",
+  responseBackgroundColor: "#111827",
+});
+
+function normalizeAppearance(settings = {}) {
+  const opacity = Number(settings.windowOpacity);
+  const fontSize = Number(settings.responseFontSize);
+  const color = value => /^#[0-9a-f]{6}$/i.test(String(value || "")) ? String(value).toLowerCase() : null;
+  return {
+    windowOpacity: Number.isFinite(opacity) ? Math.min(1, Math.max(0.2, opacity)) : DEFAULT_APPEARANCE.windowOpacity,
+    responseFontSize: Number.isFinite(fontSize) ? Math.min(24, Math.max(12, Math.round(fontSize))) : DEFAULT_APPEARANCE.responseFontSize,
+    responseTextColor: color(settings.responseTextColor) || DEFAULT_APPEARANCE.responseTextColor,
+    responseBackgroundColor: color(settings.responseBackgroundColor) || DEFAULT_APPEARANCE.responseBackgroundColor,
+  };
+}
 
 function normalizeSessionEvidenceType(value) {
   const normalized = typeof value === "string" ? value.trim().toLowerCase() : "";
@@ -140,6 +158,12 @@ class ApplicationController {
     this.activeSkill = "";
     this.activeProfile = "";
     this.codingLanguage = "";
+    this.appearance = normalizeAppearance({
+      windowOpacity: process.env.WINDOW_OPACITY,
+      responseFontSize: process.env.RESPONSE_FONT_SIZE,
+      responseTextColor: process.env.RESPONSE_TEXT_COLOR,
+      responseBackgroundColor: process.env.RESPONSE_BACKGROUND_COLOR,
+    });
     this.speechAvailable = false;
 
     // Utterance coalescing: VAD emits a transcript per natural pause, but a
@@ -286,6 +310,7 @@ class ApplicationController {
       const isFirstRun = status.needsOnboarding;
 
       await windowManager.initializeWindows({ showMainWindow: !isFirstRun });
+      windowManager.applyLLMAppearance(this.appearance);
       this.setupGlobalShortcuts();
 
       // Initialize default stealth mode with terminal icon
@@ -2064,6 +2089,7 @@ class ApplicationController {
       appIcon: this.appIcon || "terminal",
       selectedIcon: this.appIcon || "terminal",
       windowGap: windowManager.windowGap,
+      ...this.appearance,
 
       speechProvider: speechService.provider || "whisper",
       azureKey: process.env.AZURE_SPEECH_KEY || "",
@@ -2123,12 +2149,24 @@ class ApplicationController {
         const gap = Number(settings.windowGap);
         if (Number.isFinite(gap)) windowManager.setWindowGap(gap);
       }
+      const appearanceKeys = ["windowOpacity", "responseFontSize", "responseTextColor", "responseBackgroundColor"];
+      if (appearanceKeys.some(key => Object.prototype.hasOwnProperty.call(settings, key))) {
+        this.appearance = normalizeAppearance({ ...this.appearance, ...settings });
+        windowManager.applyLLMAppearance(this.appearance);
+        windowManager.broadcastToAllWindows("appearance-changed", this.appearance);
+      }
 
       // ── Persist provider / API-key fields back to .env ──
       // The settings UI is now the source of truth for these values.
       // Writing to .env ensures they survive app restarts and are picked
       // up the next time the app boots.
       const envUpdates = {};
+      if (appearanceKeys.some(key => Object.prototype.hasOwnProperty.call(settings, key))) {
+        envUpdates.WINDOW_OPACITY = String(this.appearance.windowOpacity);
+        envUpdates.RESPONSE_FONT_SIZE = String(this.appearance.responseFontSize);
+        envUpdates.RESPONSE_TEXT_COLOR = this.appearance.responseTextColor;
+        envUpdates.RESPONSE_BACKGROUND_COLOR = this.appearance.responseBackgroundColor;
+      }
       if (settings.speechProvider === "azure" || settings.speechProvider === "whisper") {
         envUpdates.SPEECH_PROVIDER = settings.speechProvider;
       }

@@ -7,6 +7,11 @@
     <script src="lib/markdown.js"></script>
     <script src="lib/mathrender.js"></script>
     <style>
+        :root {
+            --response-font-size: 14px;
+            --response-text-color: #ffffff;
+            --response-background-color: #111827;
+        }
         .text-white { color: white; }
         .text-gray-300 { color: #d1d5db; }
         .text-sm { font-size: 0.875rem; }
@@ -14,7 +19,7 @@
         .mr-2 { margin-right: 0.5rem; }
 
         body {
-            background: linear-gradient(135deg, rgba(0, 0, 0, 0.4) 0%, rgba(20, 20, 20, 0.5) 100%);;
+            background: var(--response-background-color);
             -webkit-app-region: no-drag;
             color: white;
             margin: 0;
@@ -43,6 +48,17 @@
         .markdown-content p { margin-bottom: 0.8rem; color: white; font-size: 0.875rem; }
         .markdown-content ul, .markdown-content ol { margin-bottom: 0.8rem; padding-left: 1.2rem; font-size: 0.875rem; }
         .markdown-content li { margin-bottom: 0.4rem; color: white; font-size: 0.875rem; }
+        .markdown-content,
+        .markdown-content p,
+        .markdown-content li,
+        .markdown-content ul,
+        .markdown-content ol {
+            color: var(--response-text-color);
+            font-size: var(--response-font-size);
+        }
+        .markdown-content h1,
+        .markdown-content h2,
+        .markdown-content h3 { color: var(--response-text-color); }
         .markdown-content code { 
             background-color: rgba(0, 0, 0, 0.4); 
             padding: 0.2rem 0.4rem; 
@@ -535,6 +551,10 @@
                     console.log('[LLM-RESPONSE] show-loading received');
                     showLoadingState();
                 });
+                window.electronAPI.onAppearanceChanged((_event, appearance) => applyAppearance(appearance));
+                window.electronAPI.getSettings().then(applyAppearance).catch(error => {
+                    console.error('[LLM-RESPONSE] Failed to load appearance:', error);
+                });
 
                 window.electronAPI.onTranscriptionLlmResponseStart((event, data) => {
                     if (!data || !data.messageId) return;
@@ -716,6 +736,14 @@
                         });
                 }, 200);
             }
+        }
+
+        function applyAppearance(appearance) {
+            if (!appearance) return;
+            const root = document.documentElement.style;
+            root.setProperty('--response-font-size', `${appearance.responseFontSize || 14}px`);
+            root.setProperty('--response-text-color', appearance.responseTextColor || '#ffffff');
+            root.setProperty('--response-background-color', appearance.responseBackgroundColor || '#111827');
         }
 
         function acknowledgeTelemetryRender(interactionId, target) {

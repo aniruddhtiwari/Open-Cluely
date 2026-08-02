@@ -38,7 +38,7 @@ class WindowManager {
     
     this.windowConfigs = {
       main: {
-        width: 900,
+        width: 520,
         height: 35,
         useContentSize: true,
         file: 'index.html',
@@ -1321,6 +1321,12 @@ class WindowManager {
     if (llmWindow) {
       llmWindow.hide();
     }
+  }
+
+  applyLLMAppearance(appearance) {
+    const llmWindow = this.windows.get('llmResponse');
+    if (!llmWindow || llmWindow.isDestroyed()) return;
+    llmWindow.setOpacity(appearance.windowOpacity);
   }
 
   showSettings() {

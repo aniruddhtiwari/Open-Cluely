@@ -102,17 +102,27 @@
         box-shadow: 0 0 0 1px rgba(96, 165, 250, 0.25) inset;
       }
 
-      .preset-control {
-        gap: 4px;
-      }
-
-      .preset-control label {
-        color: rgba(255, 255, 255, 0.65);
-        font-size: 10px;
-      }
-
       #transcriptButton.active i { color: #60a5fa; }
       #recordButton.recording i { color: #ff4757; }
+
+      .opacity-control { position: relative; }
+      .opacity-popover {
+        position: absolute;
+        top: 34px;
+        left: 50%;
+        transform: translateX(-50%);
+        width: 180px;
+        padding: 10px;
+        border-radius: 8px;
+        background: rgba(20, 20, 20, 0.96);
+        border: 1px solid rgba(255, 255, 255, 0.18);
+        display: none;
+        z-index: 1001;
+        -webkit-app-region: no-drag;
+      }
+      .opacity-popover.is-open { display: block; }
+      .opacity-popover-header { display: flex; justify-content: space-between; margin-bottom: 7px; }
+      .opacity-popover input { width: 100%; cursor: pointer; }
 
       .command-separator {
         width: 1px;
@@ -229,10 +239,6 @@
         background-size: 8px 8px;
         padding-right: 20px;
       }
-
-      #activeSkillTopBar { width: 90px; }
-      #activeProfileTopBar { width: 100px; }
-      #codingLanguage { width: 170px; }
 
       .command-item select:hover {
         background: linear-gradient(135deg, rgba(255, 255, 255, 0.15) 0%, rgba(255, 255, 255, 0.08) 100%);
@@ -388,25 +394,12 @@
         <span>Record</span>
       </div>
       <div class="command-separator"></div>
-      <div class="command-item preset-control" id="skillIndicator">
-        <label for="activeSkillTopBar">Skill</label>
-        <select id="activeSkillTopBar"><option value="">None</option></select>
-      </div>
-      <div class="command-item preset-control" id="profileSelector">
-        <label for="activeProfileTopBar">Profile</label>
-        <select id="activeProfileTopBar"><option value="">None</option></select>
-      </div>
-      <div class="command-item preset-control" id="languageSelector">
-        <label for="codingLanguage">Language</label>
-        <select id="codingLanguage">
-          <option value="">None</option>
-          <option value="cpp">C++</option>
-          <option value="c">C</option>
-          <option value="python">Python</option>
-          <option value="sql-pyspark-python-dax">SQL / PySpark / Python / DAX</option>
-          <option value="java">Java</option>
-          <option value="javascript">JavaScript</option>
-        </select>
+      <div class="command-item opacity-control" id="opacityButton" title="AI Response opacity">
+        <i class="fas fa-circle-half-stroke"></i>
+        <div class="opacity-popover" id="opacityPopover">
+          <div class="opacity-popover-header"><span>Opacity</span><span id="opacityPercent">100%</span></div>
+          <input id="topBarOpacity" type="range" min="20" max="100" step="1" value="100" aria-label="AI Response opacity">
+        </div>
       </div>
       <div class="command-separator"></div>
       <div class="command-item" id="settingsIndicator" title="Settings">
