@@ -1290,11 +1290,6 @@ class WindowManager {
     logger.debug('Showing and focusing LLM window');
     this.showOnCurrentDesktop(llmWindow);
     
-    // Position bound windows when LLM response is shown
-    if (this.bindWindows) {
-      this.positionBoundWindows();
-    }
-        
     logger.info('LLM response displayed', {
       contentLength: content.length,
       skill: metadata.skill,
@@ -1314,11 +1309,6 @@ class WindowManager {
       logger.debug('Showing LLM loading state');
       llmWindow.webContents.send('show-loading');
       this.showOnCurrentDesktop(llmWindow);
-      
-      // Position bound windows when LLM loading is shown
-      if (this.bindWindows) {
-        this.positionBoundWindows();
-      }
       
       logger.debug('LLM loading window shown');
     } else {

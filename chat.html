@@ -861,6 +861,9 @@
           <button class="icon-button" id="clearHistoryBtn" title="Clear chat history">
             <i class="fas fa-trash"></i>
           </button>
+          <button class="icon-button" id="closeChatBtn" title="Hide Live Transcript & Chat" aria-label="Hide Live Transcript & Chat">
+            <i class="fas fa-xmark"></i>
+          </button>
         </div>
       </div>
 
@@ -937,6 +940,7 @@
       const interimOverlay = document.getElementById('interimOverlay');
       const exportTranscriptBtn = document.getElementById('exportTranscriptBtn');
       const clearHistoryBtn = document.getElementById('clearHistoryBtn');
+      const closeChatBtn = document.getElementById('closeChatBtn');
       const sessionDocumentStrip = document.getElementById('sessionDocumentStrip');
       const sessionDocumentHeader = document.getElementById('sessionDocumentHeader');
       const sessionDocumentCount = document.getElementById('sessionDocumentCount');
@@ -1729,6 +1733,14 @@
       // UI Event Listeners
       if (clearHistoryBtn) {
         clearHistoryBtn.addEventListener('click', () => clearChatHistory());
+      }
+
+      if (closeChatBtn) {
+        closeChatBtn.addEventListener('click', () => {
+          whysperAPI.closeWindow().catch(error => {
+            console.error('Failed to hide Live Transcript & Chat:', error);
+          });
+        });
       }
 
       if (exportTranscriptBtn) {

@@ -849,10 +849,15 @@ class ApplicationController {
 
     // Settings handlers
     ipcMain.handle("show-settings", () => {
+      const settingsWindow = windowManager.getWindow("settings");
+      if (settingsWindow && !settingsWindow.isDestroyed() && settingsWindow.isVisible()) {
+        windowManager.hideSettings();
+        return { success: true, visible: false };
+      }
+
       windowManager.showSettings();
 
       // Send current settings to the settings window
-      const settingsWindow = windowManager.getWindow("settings");
       if (settingsWindow) {
         const currentSettings = this.getSettings();
         setTimeout(() => {
@@ -860,7 +865,7 @@ class ApplicationController {
         }, 100);
       }
 
-      return { success: true };
+      return { success: true, visible: true };
     });
 
     ipcMain.handle("get-settings", () => {

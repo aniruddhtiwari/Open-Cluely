@@ -588,7 +588,7 @@
                         streamingInteractionId = null;
                         streamingResponse = '';
                         hideLoadingState();
-                        displayResponse(actualData);
+                        displayResponse(actualData, { resize: false });
                         if (!renderedDuringStream) acknowledgeTelemetryRender(interactionId, 'aiResponse');
                         setupScrolling();
                         setTimeout(verifyDisplayState, 500);

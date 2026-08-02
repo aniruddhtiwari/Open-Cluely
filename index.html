@@ -36,9 +36,9 @@
         flex-wrap: nowrap;
         overflow: visible;
         border: 1px solid rgba(255, 255, 255, 0.15);
-  width: 100%;
-  /* Allow horizontal collapse to approximately one icon's width */
-  min-width: 60px;
+        box-sizing: border-box;
+        width: max-content;
+        min-width: 60px;
       }
 
       .command-item {
@@ -52,8 +52,7 @@
         cursor: pointer;
         transition: all 0.2s ease;
         -webkit-app-region: no-drag;
-  /* Allow items to shrink so the bar can collapse to one icon width */
-  flex-shrink: 1;
+        flex-shrink: 0;
       }
 
       .command-item:hover {
@@ -190,6 +189,11 @@
       #settingsIndicator {
         color: #ffffff;
         transition: all 0.3s ease;
+        width: 26px;
+        height: 26px;
+        padding: 0;
+        justify-content: center;
+        flex-shrink: 0;
       }
 
       #settingsIndicator:hover {
@@ -225,6 +229,10 @@
         background-size: 8px 8px;
         padding-right: 20px;
       }
+
+      #activeSkillTopBar { width: 90px; }
+      #activeProfileTopBar { width: 100px; }
+      #codingLanguage { width: 170px; }
 
       .command-item select:hover {
         background: linear-gradient(135deg, rgba(255, 255, 255, 0.15) 0%, rgba(255, 255, 255, 0.08) 100%);
@@ -395,7 +403,7 @@
           <option value="cpp">C++</option>
           <option value="c">C</option>
           <option value="python">Python</option>
-          <option value="sql-pyspark-python">SQL / PySpark / Python</option>
+          <option value="sql-pyspark-python-dax">SQL / PySpark / Python / DAX</option>
           <option value="java">Java</option>
           <option value="javascript">JavaScript</option>
         </select>
