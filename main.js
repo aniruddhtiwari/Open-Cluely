@@ -1257,7 +1257,7 @@ class ApplicationController {
 
       this._responseSeq = (this._responseSeq || 0) + 1;
       const messageId = `chat-${Date.now()}-${this._responseSeq}`;
-      windowManager.broadcastToAllWindows("transcription-llm-response-start", {
+      this.sendToStreamingResponseWindows("transcription-llm-response-start", {
         messageId,
         skill: this.activeSkill
       });
@@ -1291,7 +1291,7 @@ class ApplicationController {
 	conversationHistory,
         needsProgrammingLanguage ? this.codingLanguage : null,
         (delta) => {
-          windowManager.broadcastToAllWindows("transcription-llm-response-chunk", {
+          this.sendToStreamingResponseWindows("transcription-llm-response-chunk", {
             messageId,
             delta
           });
@@ -1657,6 +1657,14 @@ class ApplicationController {
     chatWindow.webContents.send(channel, data);
   }
 
+  sendToStreamingResponseWindows(channel, data) {
+    const responseWindow = windowManager.getWindow("llmResponse");
+    if (responseWindow && !responseWindow.isDestroyed()) {
+      responseWindow.webContents.send(channel, data);
+    }
+    this.sendToChatWindow(channel, data);
+  }
+
   getVoiceResponseTarget() {
     const configured = String(process.env.WHISPER_RESPONSE_TARGET || 'both').trim().toLowerCase();
     return ['chat', 'overlay', 'both'].includes(configured) ? configured : 'both';
@@ -1668,14 +1676,14 @@ class ApplicationController {
 
   sendToVoiceResponseWindows(channel, data) {
     const target = this.getVoiceResponseTarget();
-    if (target === 'chat' || target === 'both') {
-      this.sendToChatWindow(channel, data);
-    }
     if (target === 'overlay' || target === 'both') {
       const responseWindow = windowManager.getWindow("llmResponse");
       if (responseWindow && !responseWindow.isDestroyed()) {
         responseWindow.webContents.send(channel, data);
       }
+    }
+    if (target === 'chat' || target === 'both') {
+      this.sendToChatWindow(channel, data);
     }
   }
 

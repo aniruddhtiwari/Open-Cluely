@@ -475,6 +475,8 @@
         let isInteractive = false;
         let scrollableElements = [];
         let initialized = false;
+        let streamingMessageId = null;
+        let streamingResponse = '';
         
         // Immediate logging to verify script execution
         console.log('[LLM-RESPONSE] Script tag executed');
@@ -532,6 +534,24 @@
                     console.log('[LLM-RESPONSE] show-loading received');
                     showLoadingState();
                 });
+
+                window.electronAPI.onTranscriptionLlmResponseStart((event, data) => {
+                    if (!data || !data.messageId) return;
+                    streamingMessageId = data.messageId;
+                    streamingResponse = '';
+                });
+
+                window.electronAPI.onTranscriptionLlmResponseChunk((event, data) => {
+                    if (!data || !data.messageId || typeof data.delta !== 'string' || !data.delta) return;
+                    if (streamingMessageId !== data.messageId) {
+                        streamingMessageId = data.messageId;
+                        streamingResponse = '';
+                    }
+                    const isFirstChunk = streamingResponse.length === 0;
+                    streamingResponse += data.delta;
+                    if (isFirstChunk) hideLoadingState();
+                    displayResponse({ content: streamingResponse }, { resize: false });
+                });
                 
                 // Listen for LLM response
                 window.electronAPI.onDisplayLlmResponse(function() {
@@ -558,6 +578,8 @@
                             return;
                         }
                         
+                        streamingMessageId = null;
+                        streamingResponse = '';
                         hideLoadingState();
                         displayResponse(actualData);
                         setupScrolling();
@@ -640,7 +662,7 @@
             };
         }
 
-        function displayResponse(data) {
+        function displayResponse(data, options = {}) {
             // Show content
             const responseElement = document.getElementById('response-content');
             
@@ -676,14 +698,16 @@
             }
             
             // Request dynamic window sizing based on content
-            setTimeout(() => {
-                window.electronAPI.resizeLlmWindowForContent(contentMetrics)
-                    .then(result => {
-                    })
-                    .catch(error => {
-                        console.error('Failed to resize window:', error);
-                    });
-            }, 200);
+            if (options.resize !== false) {
+                setTimeout(() => {
+                    window.electronAPI.resizeLlmWindowForContent(contentMetrics)
+                        .then(result => {
+                        })
+                        .catch(error => {
+                            console.error('Failed to resize window:', error);
+                        });
+                }, 200);
+            }
         }
 
         function setupScrolling() {
