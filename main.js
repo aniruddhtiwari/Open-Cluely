@@ -449,6 +449,8 @@ class ApplicationController {
       "CommandOrControl+,": () => windowManager.showSettings(),
       "Alt+A": () => windowManager.toggleInteraction(),
       "Alt+M": () => this.toggleSpeechRecognition(),
+      "Alt+Up": () => this.adjustAIResponseOpacity(5),
+      "Alt+Down": () => this.adjustAIResponseOpacity(-5),
       "CommandOrControl+Shift+T": () => windowManager.forceAlwaysOnTopForAllWindows(),
       "CommandOrControl+Shift+Alt+T": () => {
         const results = windowManager.testAlwaysOnTopForAllWindows();
@@ -465,6 +467,15 @@ class ApplicationController {
       const success = globalShortcut.register(accelerator, handler);
       logger.debug("Global shortcut registered", { accelerator, success });
     });
+  }
+
+  adjustAIResponseOpacity(deltaPercentagePoints) {
+    const currentPercent = Math.round(this.appearance.windowOpacity * 100);
+    const nextPercent = Math.min(100, Math.max(20, currentPercent + deltaPercentagePoints));
+    if (nextPercent !== currentPercent) {
+      this.saveSettings({ windowOpacity: nextPercent / 100 });
+    }
+    return nextPercent;
   }
 
   setupServiceEventHandlers() {

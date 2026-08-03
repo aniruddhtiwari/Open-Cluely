@@ -340,6 +340,12 @@
         font-size: 12px;
       }
 
+      .shortcuts-list {
+        max-height: 250px;
+        overflow-y: auto;
+        overflow-x: hidden;
+      }
+
       .shortcuts-table th,
       .shortcuts-table td {
         padding: 8px 10px;
@@ -449,6 +455,7 @@
       <div class="shortcuts-title">
         <i class="fas fa-bolt"></i> Global Shortcuts
       </div>
+      <div class="shortcuts-list">
       <table class="shortcuts-table">
         <thead>
           <tr>
@@ -500,6 +507,14 @@
             <td>Toggle speech</td>
           </tr>
           <tr>
+            <td><span class="kbd">Alt</span> + <span class="kbd">↑</span></td>
+            <td>Increase Opacity</td>
+          </tr>
+          <tr>
+            <td><span class="kbd">Alt</span> + <span class="kbd">↓</span></td>
+            <td>Decrease Opacity</td>
+          </tr>
+          <tr>
             <td>
               <span class="kbd">Ctrl/Cmd</span>
               + <span class="kbd">,</span>
@@ -508,6 +523,7 @@
           </tr>
         </tbody>
       </table>
+      </div>
       <div class="shortcuts-footer">
         <span>Tip: Alt+A also toggles interaction from anywhere.</span>
         <a href="https://techycsr.dev" target="_blank" rel="noreferrer noopener">Made by @TechyCSR</a>
