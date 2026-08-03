@@ -449,6 +449,8 @@ class ApplicationController {
       "CommandOrControl+,": () => windowManager.showSettings(),
       "Alt+A": () => windowManager.toggleInteraction(),
       "Alt+M": () => this.toggleSpeechRecognition(),
+      "Alt+R": () => this.toggleAIResponseWindow(),
+      "Alt+T": () => this.toggleChatWindow(),
       "Alt+Up": () => this.adjustAIResponseOpacity(5),
       "Alt+Down": () => this.adjustAIResponseOpacity(-5),
       "CommandOrControl+Shift+T": () => windowManager.forceAlwaysOnTopForAllWindows(),
@@ -467,6 +469,20 @@ class ApplicationController {
       const success = globalShortcut.register(accelerator, handler);
       logger.debug("Global shortcut registered", { accelerator, success });
     });
+  }
+
+  toggleAIResponseWindow() {
+    return windowManager.toggleLLMResponseWindow();
+  }
+
+  toggleChatWindow() {
+    const chatWindow = windowManager.getWindow("chat");
+    if (chatWindow && !chatWindow.isDestroyed() && chatWindow.isVisible()) {
+      windowManager.hideChatWindow();
+      return false;
+    }
+    windowManager.showChatWindow();
+    return true;
   }
 
   adjustAIResponseOpacity(deltaPercentagePoints) {
@@ -664,18 +680,12 @@ class ApplicationController {
       return { success: true };
     });
 
-    ipcMain.handle("toggle-chat-window", () => {
-      const chatWindow = windowManager.getWindow("chat");
-      if (chatWindow && !chatWindow.isDestroyed() && chatWindow.isVisible()) {
-        windowManager.hideChatWindow();
-        return { visible: false };
-      }
-      windowManager.showChatWindow();
-      return { visible: true };
-    });
+    ipcMain.handle("toggle-chat-window", () => ({
+      visible: this.toggleChatWindow()
+    }));
 
     ipcMain.handle("toggle-ai-response-window", () => {
-      return { visible: windowManager.toggleLLMResponseWindow() };
+      return { visible: this.toggleAIResponseWindow() };
     });
 
     ipcMain.on("acknowledge-telemetry-render", (event, { interactionId, target } = {}) => {
