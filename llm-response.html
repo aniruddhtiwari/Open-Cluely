@@ -30,11 +30,17 @@
         }
         .content-area {
             -webkit-app-region: no-drag;
+            width: 100%;
+            min-width: 0;
+            box-sizing: border-box;
         }
         .markdown-content {
             line-height: 1.6;
             color: white;
             font-size: 0.875rem;
+            width: 100%;
+            min-width: 0;
+            box-sizing: border-box;
         }
         .markdown-content h1, .markdown-content h2, .markdown-content h3 {
             margin-top: 1.2rem;
@@ -72,6 +78,9 @@
             border-radius: 0.5rem; 
             margin: 1rem 0;
             overflow-x: auto;
+            max-width: 100%;
+            box-sizing: border-box;
+            white-space: pre;
             border: 1px solid rgba(255, 255, 255, 0.1);
         }
         .markdown-content pre code { 
@@ -107,9 +116,11 @@
         /* Split layout improvements */
         .split-layout {
             display: grid;
-            grid-template-columns: 1fr 1fr;
+            grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
             gap: 0.75rem;
             height: 100vh;
+            width: 100%;
+            min-width: 0;
             padding: 0;
             box-sizing: border-box;
             overflow: hidden;
@@ -121,10 +132,13 @@
             overflow: hidden;
             position: relative;
             min-height: 0; /* Important for grid items */
+            min-width: 0;
         }
 
         .panel-content {
             height: 100%;
+            width: 100%;
+            min-width: 0;
             overflow-y: auto;
             overflow-x: auto;
             padding: 1rem;
@@ -135,6 +149,8 @@
         /* Full content layout */
         .full-content {
             height: 100vh;
+            width: 100%;
+            min-width: 0;
             padding: 0;
             box-sizing: border-box;
             overflow: hidden;
@@ -143,6 +159,8 @@
 
         .full-content-inner {
             height: 100%;
+            width: 100%;
+            min-width: 0;
             background-color: rgba(255, 255, 255, 0.05);
             backdrop-filter: blur(10px);
             border-radius: 0.5rem;
@@ -175,6 +193,9 @@
             margin-bottom: 1rem;
             border-radius: 0.5rem;
             border: 1px solid rgba(255, 255, 255, 0.1);
+            width: 100%;
+            min-width: 0;
+            box-sizing: border-box;
         }
         .code-header {
             background-color: rgba(0, 0, 0, 0.4);
@@ -188,6 +209,9 @@
         .code-content {
             padding: 1rem;
             overflow-x: auto;
+            width: 100%;
+            min-width: 0;
+            box-sizing: border-box;
             background-color: rgba(0, 0, 0, 0.2);
             border-radius: 0 0 0.5rem 0.5rem;
         }
@@ -196,6 +220,10 @@
             border: none;
             margin: 0;
             padding: 0;
+            width: max-content;
+            min-width: 100%;
+            box-sizing: border-box;
+            white-space: pre;
         }
         .code-content code {
             background-color: transparent;
