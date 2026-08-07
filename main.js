@@ -1301,9 +1301,6 @@ class ApplicationController {
       // Use image directly with LLM and active skill; do not send chat messages here
       const sessionHistory = sessionManager.getOptimizedHistory();
 
-      const skillsRequiringProgrammingLanguage = ['dsa'];
-      const needsProgrammingLanguage = skillsRequiringProgrammingLanguage.includes(this.activeSkill);
-
       this._responseSeq = (this._responseSeq || 0) + 1;
       const messageId = `img-${Date.now()}-${this._responseSeq}`;
       windowManager.broadcastToAllWindows("transcription-llm-response-start", {
@@ -1317,7 +1314,7 @@ class ApplicationController {
         this.activeSkill,
 	this.activeProfile,
         sessionHistory.recent,
-        needsProgrammingLanguage ? this.codingLanguage : null,
+        this.codingLanguage || null,
         (delta) => {
           windowManager.broadcastToAllWindows("transcription-llm-response-chunk", {
             messageId,
@@ -1377,9 +1374,6 @@ class ApplicationController {
       sessionManager.addUserInput(text, 'llm_input');
 
       // Check if current skill needs programming language context
-      const skillsRequiringProgrammingLanguage = ['dsa'];
-      const needsProgrammingLanguage = skillsRequiringProgrammingLanguage.includes(this.activeSkill);
-
       this._responseSeq = (this._responseSeq || 0) + 1;
       const messageId = `chat-${Date.now()}-${this._responseSeq}`;
       this.sendToStreamingResponseWindows("transcription-llm-response-start", {
@@ -1426,7 +1420,7 @@ class ApplicationController {
         this.activeSkill,
 	this.activeProfile,
 	conversationHistory,
-        needsProgrammingLanguage ? this.codingLanguage : null,
+        this.codingLanguage || null,
         (delta) => {
           if (!firstChunkRecorded) {
             firstChunkRecorded = true;
@@ -1453,7 +1447,7 @@ class ApplicationController {
         responseLength: llmResult.response.length,
         skill: this.activeSkill,
         profile: this.activeProfile,
-	programmingLanguage: needsProgrammingLanguage ? this.codingLanguage : 'not applicable',
+	programmingLanguage: this.codingLanguage || 'not specified',
         processingTime: llmResult.metadata.processingTime,
         responsePreview: llmResult.response.substring(0, 200) + "...",
       });
@@ -1623,9 +1617,6 @@ class ApplicationController {
       });
 
       // Check if current skill needs programming language context
-      const skillsRequiringProgrammingLanguage = ['dsa'];
-      const needsProgrammingLanguage = skillsRequiringProgrammingLanguage.includes(this.activeSkill);
-
       // Stream the answer progressively to the configured speech target.
       // A unique messageId ties the start/chunk/final events to one bubble so
       // the UI never duplicates or interleaves concurrent responses.
@@ -1676,7 +1667,7 @@ class ApplicationController {
         this.activeSkill,
         this.activeProfile,
         conversationHistory,
-        needsProgrammingLanguage ? this.codingLanguage : null,
+        this.codingLanguage || null,
         (delta) => {
           if (!firstChunkRecorded) {
             firstChunkRecorded = true;
@@ -1721,7 +1712,7 @@ class ApplicationController {
       logger.info("Transcription LLM response completed", {
         responseLength: llmResult.response.length,
         skill: this.activeSkill,
-        programmingLanguage: needsProgrammingLanguage ? this.codingLanguage : 'not applicable',
+        programmingLanguage: this.codingLanguage || 'not specified',
         processingTime: llmResult.metadata.processingTime
       });
 

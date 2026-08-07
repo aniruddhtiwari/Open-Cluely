@@ -139,9 +139,9 @@ class LLMService {
       const { promptLoader } = require('../../prompt-loader');
       const skillPrompt = promptLoader.getCombinedPrompt(
         activeSkill,
-        activeProfile,
-        programmingLanguage
+        activeProfile
       );
+      const systemInstruction = this.composeTextSystemInstruction('', skillPrompt, programmingLanguage);
 
       // Build request with text + image parts
       const base64 = imageBuffer.toString('base64');
@@ -151,7 +151,7 @@ class LLMService {
           {
             role: 'user',
             parts: [
-              { text: this.formatImageInstruction(activeSkill, programmingLanguage) },
+              { text: this.formatImageInstruction(activeSkill) },
               { inlineData: { data: base64, mimeType } }
             ]
           }
@@ -160,8 +160,8 @@ class LLMService {
 
       this.applyGenerationDefaults(request);
 
-      if (skillPrompt && skillPrompt.trim().length > 0) {
-        request.systemInstruction = { parts: [{ text: skillPrompt }] };
+      if (systemInstruction) {
+        request.systemInstruction = { parts: [{ text: systemInstruction }] };
       }
 
       // Execute with retries/timeout - try alternative method first for network reliability
@@ -190,10 +190,7 @@ class LLMService {
         }
       }
 
-      // Enforce language in code fences if provided
-      const finalResponse = programmingLanguage
-        ? this.enforceProgrammingLanguage(responseText, programmingLanguage)
-        : responseText;
+      const finalResponse = responseText;
 
       logger.logPerformance('LLM image processing', startTime, {
         activeSkill,
@@ -246,9 +243,9 @@ class LLMService {
       const { promptLoader } = require('../../prompt-loader');
       const skillPrompt = promptLoader.getCombinedPrompt(
         activeSkill,
-        activeProfile,
-        programmingLanguage
+        activeProfile
       );
+      const systemInstruction = this.composeTextSystemInstruction('', skillPrompt, programmingLanguage);
       const base64 = imageBuffer.toString('base64');
 
       const geminiRequest = {
@@ -256,15 +253,15 @@ class LLMService {
           {
             role: 'user',
             parts: [
-              { text: this.formatImageInstruction(activeSkill, programmingLanguage) },
+              { text: this.formatImageInstruction(activeSkill) },
               { inlineData: { data: base64, mimeType } }
             ]
           }
         ]
       };
       this.applyGenerationDefaults(geminiRequest);
-      if (skillPrompt && skillPrompt.trim().length > 0) {
-        geminiRequest.systemInstruction = { parts: [{ text: skillPrompt }] };
+      if (systemInstruction) {
+        geminiRequest.systemInstruction = { parts: [{ text: systemInstruction }] };
       }
 
       const fullText = await this.executeStreamingRequest(geminiRequest, (delta) => {
@@ -273,9 +270,7 @@ class LLMService {
         }
       });
 
-      const finalResponse = programmingLanguage
-        ? this.enforceProgrammingLanguage(fullText, programmingLanguage)
-        : fullText;
+      const finalResponse = fullText;
 
       logger.logPerformance('LLM image streaming', startTime, {
         activeSkill,
@@ -306,12 +301,11 @@ class LLMService {
     }
   }
 
-  formatImageInstruction(activeSkill, programmingLanguage) {
-    const langNote = programmingLanguage ? ` Use only ${programmingLanguage.toUpperCase()} for any code.` : '';
+  formatImageInstruction(activeSkill) {
     const skillNote = activeSkill
       ? ` for a ${String(activeSkill).toUpperCase()} question`
       : '';
-    return `Analyze this image${skillNote}. Extract the problem concisely and provide the best possible solution with explanation and final code.${langNote}`;
+    return `Analyze this image${skillNote}. Extract the problem concisely and provide the best possible solution with explanation and final code.`;
   }
 
   async processTextWithSkill(
@@ -388,10 +382,7 @@ class LLMService {
         }
       }
       
-      // Enforce language in code fences if programmingLanguage specified
-      const finalResponse = programmingLanguage
-        ? this.enforceProgrammingLanguage(response, programmingLanguage)
-        : response;
+      const finalResponse = response;
 
       logger.logPerformance('LLM text processing', startTime, {
         activeSkill,
@@ -477,9 +468,7 @@ class LLMService {
         }
       });
 
-      const finalResponse = programmingLanguage
-        ? this.enforceProgrammingLanguage(fullText, programmingLanguage)
-        : fullText;
+      const finalResponse = fullText;
 
       logger.logPerformance('LLM text streaming', startTime, {
         activeSkill,
@@ -591,10 +580,7 @@ class LLMService {
         }
       }
       
-      // Enforce language in code fences if programmingLanguage specified
-      const finalResponse = programmingLanguage
-        ? this.enforceProgrammingLanguage(response, programmingLanguage)
-        : response;
+      const finalResponse = response;
 
       logger.logPerformance('LLM transcription processing', startTime, {
         activeSkill,
@@ -674,7 +660,7 @@ class LLMService {
     const sessionManager = require('../managers/session.manager');
     if (Array.isArray(sessionMemory)) {
       const conversationHistory = sessionMemory.slice(-15);
-      const skillContext = sessionManager.getSkillContext(activeSkill, programmingLanguage);
+      const skillContext = sessionManager.getSkillContext(activeSkill, null);
       return this.buildGeminiRequestWithHistory(
         text,
         activeSkill,
@@ -690,12 +676,12 @@ class LLMService {
 
     const skillAndProfilePrompt = promptLoader.getCombinedPrompt(
       activeSkill,
-      activeProfile,
-      programmingLanguage
+      activeProfile
     );
     const combinedSystemPrompt = this.composeTextSystemInstruction(
       responseGuidance,
-      skillAndProfilePrompt
+      skillAndProfilePrompt,
+      programmingLanguage
     );
     const promptComponents = promptBuilderService.buildPromptComponents({
       question: text,
@@ -746,12 +732,12 @@ class LLMService {
 
     const skillAndProfilePrompt = promptLoader.getCombinedPrompt(
       activeSkill,
-      activeProfile,
-      programmingLanguage
+      activeProfile
     ) || skillContext.skillPrompt || '';
     const combinedPrompt = this.composeTextSystemInstruction(
       responseGuidance,
-      skillAndProfilePrompt
+      skillAndProfilePrompt,
+      programmingLanguage
     );
     const promptComponents = promptBuilderService.buildPromptComponents({
       question: text,
@@ -819,14 +805,42 @@ class LLMService {
     return { request, promptMetadata: promptComponents.metadata };
   }
 
-  composeTextSystemInstruction(responseGuidance, skillAndProfilePrompt) {
+  composeTextSystemInstruction(responseGuidance, skillAndProfilePrompt, programmingLanguage = null) {
     const applicationGuidance = typeof responseGuidance === 'string'
       ? responseGuidance.trim()
       : '';
     const optionalPrompt = typeof skillAndProfilePrompt === 'string'
       ? skillAndProfilePrompt.trim()
       : '';
-    return [applicationGuidance, optionalPrompt].filter(Boolean).join('\n\n');
+    return [
+      applicationGuidance,
+      optionalPrompt,
+      this.getCodingLanguageGuidance(programmingLanguage)
+    ].filter(Boolean).join('\n\n');
+  }
+
+  getCodingLanguageGuidance(programmingLanguage) {
+    const language = typeof programmingLanguage === 'string'
+      ? programmingLanguage.trim().toLowerCase()
+      : '';
+    if (!language) return '';
+
+    if (language === 'sql-pyspark-python-dax') {
+      return 'When the current data-engineering request requires code, choose the most appropriate of SQL, PySpark, Python, or DAX for the actual task. An explicit language in the current request overrides this preference. Do not produce code solely because this preference is selected.';
+    }
+
+    const languageNames = {
+      sql: 'SQL',
+      python: 'Python',
+      pyspark: 'PySpark',
+      dax: 'DAX',
+      java: 'Java',
+      cpp: 'C++',
+      c: 'C'
+    };
+    const languageName = languageNames[language];
+    if (!languageName) return '';
+    return `When the current request requires code, prefer ${languageName}. An explicit language in the current request overrides this preference. Do not produce code solely because this preference is selected.`;
   }
 
   createKnowledgeMetadata(promptMetadata, retrievalMetadata = {}) {
@@ -871,7 +885,7 @@ class LLMService {
 
     const sessionManager = require('../managers/session.manager');
     if (Array.isArray(sessionMemory)) {
-      const skillContext = sessionManager.getSkillContext(activeSkill, programmingLanguage);
+      const skillContext = sessionManager.getSkillContext(activeSkill, null);
       return this.buildIntelligentTranscriptionRequestWithHistory(
         cleanText,
         activeSkill,
@@ -1022,18 +1036,22 @@ class LLMService {
     programmingLanguage,
     responseGuidance = ''
   ) {
-    const intelligentPrompt = this.getIntelligentTranscriptionPrompt(activeSkill, programmingLanguage);
+    const intelligentPrompt = this.getIntelligentTranscriptionPrompt(activeSkill);
     const skillAndProfilePrompt = promptLoader.getCombinedPrompt(
       activeSkill,
-      activeProfile,
-      programmingLanguage
+      activeProfile
     );
-    return [intelligentPrompt, responseGuidance, skillAndProfilePrompt]
+    return [
+      intelligentPrompt,
+      responseGuidance,
+      skillAndProfilePrompt,
+      this.getCodingLanguageGuidance(programmingLanguage)
+    ]
       .filter(Boolean)
       .join('\n\n');
   }
 
-  getIntelligentTranscriptionPrompt(activeSkill, programmingLanguage) {
+  getIntelligentTranscriptionPrompt(activeSkill) {
     if (!activeSkill) {
       let genericPrompt = `# Intelligent Transcription Response System
 
@@ -1046,15 +1064,6 @@ Determine whether the transcript contains an actual question or request.
 - Do not claim to be an AI or language model when answering on the candidate's behalf. If candidate facts are unavailable, do not invent them.
 - Answer general technical questions neutrally unless the question asks how the candidate used the technology and the supplied knowledge supports that experience.`;
 
-      if (programmingLanguage) {
-        const lang = String(programmingLanguage).toLowerCase();
-        const languageMap = { cpp: 'C++', c: 'C', python: 'Python', java: 'Java', javascript: 'JavaScript', js: 'JavaScript' };
-        const fenceTagMap = { cpp: 'cpp', c: 'c', python: 'python', java: 'java', javascript: 'javascript', js: 'javascript' };
-        const languageTitle = languageMap[lang] || (lang.charAt(0).toUpperCase() + lang.slice(1));
-        const fenceTag = fenceTagMap[lang] || lang || 'text';
-        genericPrompt += `\n\nWhen a response requires code, prefer ${languageTitle} and use the code-fence language tag \`${fenceTag}\`. Do not force code or a programming language when it is not relevant to the request.`;
-      }
-
       return genericPrompt;
     }
 
@@ -1063,16 +1072,6 @@ Determine whether the transcript contains an actual question or request.
 Assume you are asked a question in ${activeSkill.toUpperCase()} mode. Your job is to intelligently respond to question/message with appropriate brevity.
 Assume you are in an interview and you need to perform best in ${activeSkill.toUpperCase()} mode.
 Always respond to the point, do not repeat the question or unnecessary information which is not related to ${activeSkill}.`;
-
-    // Add programming language context if provided
-    if (programmingLanguage) {
-      const lang = String(programmingLanguage).toLowerCase();
-      const languageMap = { cpp: 'C++', c: 'C', python: 'Python', java: 'Java', javascript: 'JavaScript', js: 'JavaScript' };
-      const fenceTagMap = { cpp: 'cpp', c: 'c', python: 'python', java: 'java', javascript: 'javascript', js: 'javascript' };
-      const languageTitle = languageMap[lang] || (lang.charAt(0).toUpperCase() + lang.slice(1));
-      const fenceTag = fenceTagMap[lang] || lang || 'text';
-      prompt += `\n\nCODING CONTEXT: Respond ONLY in ${languageTitle}. All code blocks must use triple backticks with language tag \`\`\`${fenceTag}\`\`\`. Do not include other languages unless explicitly asked.`;
-    }
 
     prompt += `
 
@@ -1301,9 +1300,7 @@ Remember: Be intelligent about filtering - only provide detailed responses when 
         }
       });
 
-      const finalResponse = programmingLanguage
-        ? this.enforceProgrammingLanguage(fullText, programmingLanguage)
-        : fullText;
+      const finalResponse = fullText;
 
       logger.logPerformance('LLM transcription streaming', startTime, {
         activeSkill,
