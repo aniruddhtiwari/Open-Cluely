@@ -1377,9 +1377,12 @@ class WindowManager {
   }
 
   applyLLMAppearance(appearance) {
-    const llmWindow = this.windows.get('llmResponse');
-    if (!llmWindow || llmWindow.isDestroyed()) return;
-    llmWindow.setOpacity(appearance.windowOpacity);
+    for (const type of ['llmResponse', 'chat']) {
+      const window = this.windows.get(type);
+      if (window && !window.isDestroyed()) {
+        window.setOpacity(appearance.windowOpacity);
+      }
+    }
   }
 
   showSettings() {
