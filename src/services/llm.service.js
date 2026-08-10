@@ -826,7 +826,7 @@ class LLMService {
     if (!language) return '';
 
     if (language === 'sql-pyspark-python-dax') {
-      return 'When the current data-engineering request requires code, choose the most appropriate of SQL, PySpark, Python, or DAX for the actual task. An explicit language in the current request overrides this preference. Do not produce code solely because this preference is selected.';
+      return 'When the current data-engineering request requires code, choose the most appropriate of SQL, PySpark, Python, or DAX for the actual task. Use multiple languages only when they materially help solve the task. An explicit language in the current request overrides this preference. Do not produce code solely because this preference is selected.';
     }
 
     const languageNames = {
@@ -840,7 +840,7 @@ class LLMService {
     };
     const languageName = languageNames[language];
     if (!languageName) return '';
-    return `When the current request requires code, prefer ${languageName}. An explicit language in the current request overrides this preference. Do not produce code solely because this preference is selected.`;
+    return `When the current request genuinely requires code, use ${languageName} only. Do not include equivalent implementations in other languages unless the current request explicitly asks for multiple languages. An explicit language in the current request overrides this selection. Do not produce code solely because this language is selected.`;
   }
 
   createKnowledgeMetadata(promptMetadata, retrievalMetadata = {}) {
