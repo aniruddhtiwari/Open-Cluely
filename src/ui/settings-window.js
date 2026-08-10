@@ -7,6 +7,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const closeButton = document.getElementById('closeButton');
     const quitButton = document.getElementById('quitButton');
     const speechProviderSelect = document.getElementById('speechProvider');
+    const respondToSelect = document.getElementById('respondTo');
     const azureKeyInput = document.getElementById('azureKey');
     const azureRegionInput = document.getElementById('azureRegion');
     const whisperCommandInput = document.getElementById('whisperCommand');
@@ -136,6 +137,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Function to load settings into UI
     const loadSettingsIntoUI = (settings) => {
         if (settings.speechProvider && speechProviderSelect) speechProviderSelect.value = settings.speechProvider;
+        if (respondToSelect) respondToSelect.value = 'all';
         // Always set the input value, even if empty, so the user sees what's
         // currently configured (including env-derived defaults). Previously
         // empty strings were skipped which left stale UI values.
@@ -218,12 +220,18 @@ document.addEventListener('DOMContentLoaded', () => {
             if (responseTextColorInput) responseTextColorInput.value = appearance.responseTextColor;
             if (responseBackgroundColorInput) responseBackgroundColorInput.value = appearance.responseBackgroundColor;
         });
+        window.electronAPI.receive('respond-to-changed', (_event, data) => {
+            if (respondToSelect && data) {
+                respondToSelect.value = 'all';
+            }
+        });
     }
 
     // Save settings helper function
     const saveSettings = () => {
         const settings = {};
         if (speechProviderSelect) settings.speechProvider = speechProviderSelect.value;
+        if (respondToSelect) settings.respondTo = respondToSelect.value;
         if (azureKeyInput) settings.azureKey = azureKeyInput.value;
         if (azureRegionInput) settings.azureRegion = azureRegionInput.value;
         if (whisperCommandInput) settings.whisperCommand = whisperCommandInput.value;
@@ -277,6 +285,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Add event listeners for all inputs
     const inputs = [
+        respondToSelect,
         azureKeyInput,
         azureRegionInput,
         whisperCommandInput,

@@ -6,6 +6,7 @@ const { app, BrowserWindow, dialog, globalShortcut, session, ipcMain } = require
 const MAX_SESSION_DOCUMENT_FILE_SIZE_BYTES = 10 * 1024 * 1024;
 const ALLOWED_SESSION_DOCUMENT_EXTENSIONS = new Set([".txt", ".md", ".markdown", ".docx", ".pdf", ".pptx", ".csv", ".xlsx", ".xls"]);
 const ALLOWED_SESSION_EVIDENCE_TYPES = new Set(["candidate", "job", "reference", "unknown"]);
+const ALLOWED_AUDIO_RESPONSE_MODES = new Set(["all"]);
 const DEFAULT_APPEARANCE = Object.freeze({
   windowOpacity: 1,
   responseFontSize: 14,
@@ -28,6 +29,38 @@ function normalizeAppearance(settings = {}) {
 function normalizeSessionEvidenceType(value) {
   const normalized = typeof value === "string" ? value.trim().toLowerCase() : "";
   return ALLOWED_SESSION_EVIDENCE_TYPES.has(normalized) ? normalized : "unknown";
+}
+
+function normalizeAudioResponseMode(value) {
+  const normalized = typeof value === "string" ? value.trim().toLowerCase() : "";
+  return ALLOWED_AUDIO_RESPONSE_MODES.has(normalized) ? normalized : "all";
+}
+
+function isActionableAudioRequest(text) {
+  const normalized = typeof text === "string" ? text.trim().toLowerCase() : "";
+  if (!normalized) return false;
+
+  const withoutTrailingPunctuation = normalized.replace(/[.!?]+$/g, "").trim();
+  if (/^(?:yes|no|ok|okay|right|got it|sure|exactly)$/.test(withoutTrailingPunctuation)) {
+    return false;
+  }
+  if (/\?$/.test(normalized)) return true;
+
+  const conversationalPrefix = "(?:(?:and|so|but)\\s+)?";
+  const interrogative = new RegExp(`^${conversationalPrefix}(?:what|why|how|when|where|who|which)\\b`, "i");
+  const auxiliaryQuestion = new RegExp(`^${conversationalPrefix}(?:is|are|am|do|does|did|can|could|would|should|will)\\b`, "i");
+  const request = new RegExp(
+    `^${conversationalPrefix}(?:(?:please|can|could|would|will)\\s+you\\s+)?(?:explain|describe|tell\\s+me|show\\s+me|write|give\\s+me|compare|optimize|solve|walk\\s+me\\s+through)\\b`,
+    "i"
+  );
+  return interrogative.test(normalized) || auxiliaryQuestion.test(normalized) || request.test(normalized);
+}
+
+function shouldAutomaticallyRespondToAudio(mode, source, text) {
+  const normalizedMode = normalizeAudioResponseMode(mode);
+  if (normalizedMode === "all") return true;
+  if (normalizedMode === "speaker") return source === "speaker";
+  return isActionableAudioRequest(text);
 }
 
 // ── Resolve a stable .env location ──
@@ -158,6 +191,7 @@ class ApplicationController {
     this.activeSkill = "";
     this.activeProfile = "";
     this.codingLanguage = "";
+    this.respondTo = "all";
     this.appearance = normalizeAppearance({
       windowOpacity: process.env.WINDOW_OPACITY,
       responseFontSize: process.env.RESPONSE_FONT_SIZE,
@@ -172,6 +206,7 @@ class ApplicationController {
     // call instead of several slow, half-answered ones.
     this._utteranceBuffer = "";
     this._utteranceFragments = [];
+    this._utteranceSource = "mic";
     this._utteranceTimer = null;
     this._utteranceDispatchInFlight = false;
     this._utteranceCoalesceMs = 800;
@@ -504,7 +539,7 @@ class ApplicationController {
     });
 
     speechService.on("transcription", (text) => {
-      this.handleTranscriptionFragment(text);
+      this.handleTranscriptionFragment(text, "mic");
     });
 
     speechService.on("interim-transcription", (text) => {
@@ -1495,7 +1530,7 @@ class ApplicationController {
    * asked once the speaker has actually paused — this is what stops one spoken
    * line from producing two separate, slow answers.
    */
-  handleTranscriptionFragment(text) {
+  handleTranscriptionFragment(text, source = "mic") {
     const fragment = (text || "").trim();
     if (!fragment) {
       return;
@@ -1504,6 +1539,9 @@ class ApplicationController {
     // Route speech UI events according to the user's response-target setting.
     this.sendToVoiceResponseWindows("transcription-received", { text: fragment });
 
+    if (!this._utteranceBuffer) {
+      this._utteranceSource = source === "speaker" ? "speaker" : "mic";
+    }
     this._utteranceBuffer = this._utteranceBuffer
       ? `${this._utteranceBuffer} ${fragment}`
       : fragment;
@@ -1541,8 +1579,16 @@ class ApplicationController {
       return;
     }
     const rawTranscription = this._utteranceFragments.join(" ");
+    const source = this._utteranceSource;
     this._utteranceBuffer = "";
     this._utteranceFragments = [];
+    this._utteranceSource = "mic";
+
+    if (!shouldAutomaticallyRespondToAudio(this.respondTo, source, combined)) {
+      sessionManager.addUserInput(combined, "speech");
+      return;
+    }
+
     this._utteranceDispatchInFlight = true;
     const interactionId = sessionTelemetryManager.startInteraction({
       inputType: "speech",
@@ -2115,6 +2161,7 @@ class ApplicationController {
     // distinguish "unset" from "stale value from a previous load".
     return {
       codingLanguage: this.codingLanguage || "",
+      respondTo: this.respondTo,
       activeSkill: this.activeSkill,
       activeProfile: this.activeProfile,
       appIcon: this.appIcon || "terminal",
@@ -2149,6 +2196,12 @@ class ApplicationController {
           : "";
         windowManager.broadcastToAllWindows("coding-language-changed", {
           language: this.codingLanguage,
+        });
+      }
+      if (Object.prototype.hasOwnProperty.call(settings, "respondTo")) {
+        this.respondTo = normalizeAudioResponseMode(settings.respondTo);
+        windowManager.broadcastToAllWindows("respond-to-changed", {
+          respondTo: this.respondTo,
         });
       }
       if (Object.prototype.hasOwnProperty.call(settings, "activeSkill")) {
