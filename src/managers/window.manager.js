@@ -1377,10 +1377,13 @@ class WindowManager {
   }
 
   applyLLMAppearance(appearance) {
-    for (const type of ['llmResponse', 'chat']) {
+    for (const type of ['llmResponse', 'chat', 'settings']) {
       const window = this.windows.get(type);
       if (window && !window.isDestroyed()) {
-        window.setOpacity(appearance.windowOpacity);
+        const opacity = type === 'settings'
+          ? Math.max(appearance.windowOpacity, 0.7)
+          : appearance.windowOpacity;
+        window.setOpacity(opacity);
       }
     }
   }
