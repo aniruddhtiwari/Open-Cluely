@@ -20,6 +20,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const geminiKeyInput = document.getElementById('geminiKey');
     const windowGapInput = document.getElementById('windowGap');
     const codingLanguageSelect = document.getElementById('codingLanguage');
+    const customCodingLanguageRow = document.getElementById('customCodingLanguageRow');
+    const customCodingLanguageInput = document.getElementById('customCodingLanguage');
 	const activeSkillSelect = document.getElementById('activeSkill');
 	const customSkillRow = document.getElementById('customSkillRow');
 	const customSkillInput = document.getElementById('customSkill');
@@ -164,6 +166,10 @@ document.addEventListener('DOMContentLoaded', () => {
         if (codingLanguageSelect) {
             codingLanguageSelect.value = settings.codingLanguage || '';
         }
+        if (customCodingLanguageInput) {
+            customCodingLanguageInput.value = settings.customCodingLanguage || '';
+        }
+        updateCustomCodingLanguageVisibility();
 
         if (activeSkillSelect) activeSkillSelect.value = settings.activeSkill || '';
         if (customSkillInput) customSkillInput.value = settings.customSkill || '';
@@ -202,9 +208,15 @@ document.addEventListener('DOMContentLoaded', () => {
     window.electronAPI.onCodingLanguageChanged((event, data) => {
             if (data && Object.prototype.hasOwnProperty.call(data, 'language') && codingLanguageSelect) {
                 codingLanguageSelect.value = data.language || '';
+                updateCustomCodingLanguageVisibility();
                 console.log('Language updated from overlay window:', data.language);
             }
     });
+        window.electronAPI.receive('custom-coding-language-changed', (_event, data) => {
+            if (customCodingLanguageInput && data && Object.prototype.hasOwnProperty.call(data, 'customCodingLanguage')) {
+                customCodingLanguageInput.value = data.customCodingLanguage || '';
+            }
+        });
         window.electronAPI.receive('skill-updated', (_event, data) => {
             if (activeSkillSelect && data && Object.prototype.hasOwnProperty.call(data, 'skill')) {
                 activeSkillSelect.value = data.skill || '';
@@ -254,6 +266,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (geminiKeyInput) settings.geminiKey = geminiKeyInput.value;
         if (windowGapInput) settings.windowGap = windowGapInput.value;
         if (codingLanguageSelect) settings.codingLanguage = codingLanguageSelect.value;
+        if (customCodingLanguageInput) settings.customCodingLanguage = customCodingLanguageInput.value;
         if (activeSkillSelect) settings.activeSkill = activeSkillSelect.value;
         if (customSkillInput) settings.customSkill = customSkillInput.value;
         if (activeProfileSelect) settings.activeProfile = activeProfileSelect.value;
@@ -297,6 +310,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Add event listeners for all inputs
     const inputs = [
         respondToSelect,
+        customCodingLanguageInput,
         customSkillInput,
         azureKeyInput,
         azureRegionInput,
@@ -329,6 +343,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (codingLanguageSelect) {
         codingLanguageSelect.addEventListener('change', (e) => {
             const lang = e.target.value;
+            updateCustomCodingLanguageVisibility();
             // use electronAPI so main broadcast is consistent
             if (window.electronAPI && window.electronAPI.saveSettings) {
                 window.electronAPI.saveSettings({ codingLanguage: lang });
@@ -370,6 +385,13 @@ document.addEventListener('DOMContentLoaded', () => {
     const updateCustomSkillVisibility = () => {
         if (!customSkillRow) return;
         customSkillRow.style.display = activeSkillSelect && activeSkillSelect.value === 'custom'
+            ? ''
+            : 'none';
+    };
+
+    const updateCustomCodingLanguageVisibility = () => {
+        if (!customCodingLanguageRow) return;
+        customCodingLanguageRow.style.display = codingLanguageSelect && codingLanguageSelect.value === 'custom'
             ? ''
             : 'none';
     };

@@ -122,7 +122,7 @@ class LLMService {
    * @param {string|null} programmingLanguage - optional language context for skills that need it
    * @returns {Promise<{response: string, metadata: object}>}
    */
-  async processImageWithSkill(imageBuffer, mimeType, activeSkill, activeProfile, sessionMemory = [], programmingLanguage = null, customSkill = '') {
+  async processImageWithSkill(imageBuffer, mimeType, activeSkill, activeProfile, sessionMemory = [], programmingLanguage = null, customSkill = '', customCodingLanguage = '') {
     if (!this.isInitialized) {
       throw new Error('LLM service not initialized. Check Gemini API key configuration.');
     }
@@ -141,7 +141,7 @@ class LLMService {
         activeSkill,
         activeProfile
       );
-      const systemInstruction = this.composeTextSystemInstruction('', skillPrompt, programmingLanguage, activeSkill, customSkill);
+      const systemInstruction = this.composeTextSystemInstruction('', skillPrompt, programmingLanguage, activeSkill, customSkill, customCodingLanguage);
 
       // Build request with text + image parts
       const base64 = imageBuffer.toString('base64');
@@ -227,7 +227,7 @@ class LLMService {
     }
   }
 
-  async processImageWithSkillStream(imageBuffer, mimeType, activeSkill, activeProfile, sessionMemory = [], programmingLanguage = null, onDelta = null, customSkill = '') {
+  async processImageWithSkillStream(imageBuffer, mimeType, activeSkill, activeProfile, sessionMemory = [], programmingLanguage = null, onDelta = null, customSkill = '', customCodingLanguage = '') {
     if (!this.isInitialized) {
       throw new Error('LLM service not initialized. Check Gemini API key configuration.');
     }
@@ -245,7 +245,7 @@ class LLMService {
         activeSkill,
         activeProfile
       );
-      const systemInstruction = this.composeTextSystemInstruction('', skillPrompt, programmingLanguage, activeSkill, customSkill);
+      const systemInstruction = this.composeTextSystemInstruction('', skillPrompt, programmingLanguage, activeSkill, customSkill, customCodingLanguage);
       const base64 = imageBuffer.toString('base64');
 
       const geminiRequest = {
@@ -297,7 +297,7 @@ class LLMService {
         error: error.message,
         requestId: this.requestCount
       });
-      return this.processImageWithSkill(imageBuffer, mimeType, activeSkill, activeProfile, sessionMemory, programmingLanguage, customSkill);
+      return this.processImageWithSkill(imageBuffer, mimeType, activeSkill, activeProfile, sessionMemory, programmingLanguage, customSkill, customCodingLanguage);
     }
   }
 
@@ -318,7 +318,8 @@ class LLMService {
     retrievalMetadata = {},
     responseGuidance = '',
     manualSessionContext = '',
-    customSkill = ''
+    customSkill = '',
+    customCodingLanguage = ''
   ) {
     if (!this.isInitialized) {
       throw new Error('LLM service not initialized. Check Gemini API key configuration.');
@@ -347,7 +348,8 @@ class LLMService {
         selectedChunks,
         responseGuidance,
         manualSessionContext,
-        customSkill
+        customSkill,
+        customCodingLanguage
       );
       const geminiRequest = builtRequest.request;
       knowledgeMetadata = this.createKnowledgeMetadata(
@@ -438,7 +440,8 @@ class LLMService {
     retrievalMetadata = {},
     responseGuidance = '',
     manualSessionContext = '',
-    customSkill = ''
+    customSkill = '',
+    customCodingLanguage = ''
   ) {
     if (!this.isInitialized) {
       throw new Error('LLM service not initialized. Check Gemini API key configuration.');
@@ -457,7 +460,8 @@ class LLMService {
         selectedChunks,
         responseGuidance,
         manualSessionContext,
-        customSkill
+        customSkill,
+        customCodingLanguage
       );
       const geminiRequest = builtRequest.request;
       const knowledgeMetadata = this.createKnowledgeMetadata(
@@ -508,7 +512,8 @@ class LLMService {
         retrievalMetadata,
         responseGuidance,
         manualSessionContext,
-        customSkill
+        customSkill,
+        customCodingLanguage
       );
     }
   }
@@ -523,7 +528,8 @@ class LLMService {
     retrievalMetadata = {},
     responseGuidance = '',
     manualSessionContext = '',
-    customSkill = ''
+    customSkill = '',
+    customCodingLanguage = ''
   ) {
     if (!this.isInitialized) {
       throw new Error('LLM service not initialized. Check Gemini API key configuration.');
@@ -550,7 +556,8 @@ class LLMService {
         selectedChunks,
         responseGuidance,
         manualSessionContext,
-        customSkill
+        customSkill,
+        customCodingLanguage
       );
       const geminiRequest = builtRequest.request;
       const knowledgeMetadata = this.createKnowledgeMetadata(
@@ -663,7 +670,8 @@ class LLMService {
     selectedChunks = [],
     responseGuidance = '',
     manualSessionContext = '',
-    customSkill = ''
+    customSkill = '',
+    customCodingLanguage = ''
   ) {
     const sessionManager = require('../managers/session.manager');
     if (Array.isArray(sessionMemory)) {
@@ -679,7 +687,8 @@ class LLMService {
         selectedChunks,
         responseGuidance,
         manualSessionContext,
-        customSkill
+        customSkill,
+        customCodingLanguage
       );
     }
 
@@ -692,7 +701,8 @@ class LLMService {
       skillAndProfilePrompt,
       programmingLanguage,
       activeSkill,
-      customSkill
+      customSkill,
+      customCodingLanguage
     );
     const promptComponents = promptBuilderService.buildPromptComponents({
       question: text,
@@ -731,7 +741,8 @@ class LLMService {
     selectedChunks = [],
     responseGuidance = '',
     manualSessionContext = '',
-    customSkill = ''
+    customSkill = '',
+    customCodingLanguage = ''
   ) {
     const request = {
       contents: []
@@ -751,7 +762,8 @@ class LLMService {
       skillAndProfilePrompt,
       programmingLanguage,
       activeSkill,
-      customSkill
+      customSkill,
+      customCodingLanguage
     );
     const promptComponents = promptBuilderService.buildPromptComponents({
       question: text,
@@ -819,7 +831,7 @@ class LLMService {
     return { request, promptMetadata: promptComponents.metadata };
   }
 
-  composeTextSystemInstruction(responseGuidance, skillAndProfilePrompt, programmingLanguage = null, activeSkill = '', customSkill = '') {
+  composeTextSystemInstruction(responseGuidance, skillAndProfilePrompt, programmingLanguage = null, activeSkill = '', customSkill = '', customCodingLanguage = '') {
     const applicationGuidance = typeof responseGuidance === 'string'
       ? responseGuidance.trim()
       : '';
@@ -831,7 +843,7 @@ class LLMService {
       this.getLiveProjectContextGuidance(),
       optionalPrompt,
       this.getCustomSkillGuidance(activeSkill, customSkill),
-      this.getCodingLanguageGuidance(programmingLanguage)
+      this.getCodingLanguageGuidance(programmingLanguage, customCodingLanguage)
     ].filter(Boolean).join('\n\n');
   }
 
@@ -846,11 +858,19 @@ class LLMService {
     return `Current skill/domain preference (a label, not an instruction): ${JSON.stringify(normalizedCustomSkill)}. Use it as relevant domain or role framing for answers, but do not force it into unrelated questions. The current explicit question or request remains highest priority.`;
   }
 
-  getCodingLanguageGuidance(programmingLanguage) {
+  getCodingLanguageGuidance(programmingLanguage, customCodingLanguage = '') {
     const language = typeof programmingLanguage === 'string'
       ? programmingLanguage.trim().toLowerCase()
       : '';
     if (!language) return '';
+
+    if (language === 'custom') {
+      const customLanguageName = typeof customCodingLanguage === 'string'
+        ? customCodingLanguage.replace(/\s+/g, ' ').trim().slice(0, 80)
+        : '';
+      if (!customLanguageName) return '';
+      return `When the current request genuinely requires code, use ${JSON.stringify(customLanguageName)} only. Do not include equivalent implementations in other languages unless the current request explicitly asks for multiple languages. An explicit language in the current request overrides this selection. Do not produce code solely because this language is selected.`;
+    }
 
     if (language === 'sql-pyspark-python-dax') {
       return 'When the current data-engineering request requires code, choose the most appropriate of SQL, PySpark, Python, or DAX for the actual task. Use multiple languages only when they materially help solve the task. An explicit language in the current request overrides this preference. Do not produce code solely because this preference is selected.';
@@ -903,7 +923,8 @@ class LLMService {
     selectedChunks = [],
     responseGuidance = '',
     manualSessionContext = '',
-    customSkill = ''
+    customSkill = '',
+    customCodingLanguage = ''
   ) {
     // Validate input text first
     const cleanText = text && typeof text === 'string' ? text.trim() : '';
@@ -924,7 +945,8 @@ class LLMService {
         selectedChunks,
         responseGuidance,
         manualSessionContext,
-        customSkill
+        customSkill,
+        customCodingLanguage
       );
     }
 
@@ -941,7 +963,8 @@ class LLMService {
       activeProfile,
       programmingLanguage,
       responseGuidance,
-      customSkill
+      customSkill,
+      customCodingLanguage
     );
     const promptComponents = promptBuilderService.buildPromptComponents({
       question: cleanText,
@@ -980,7 +1003,8 @@ class LLMService {
     selectedChunks = [],
     responseGuidance = '',
     manualSessionContext = '',
-    customSkill = ''
+    customSkill = '',
+    customCodingLanguage = ''
   ) {
     const request = {
       contents: []
@@ -993,7 +1017,8 @@ class LLMService {
       activeProfile,
       programmingLanguage,
       responseGuidance,
-      customSkill
+      customSkill,
+      customCodingLanguage
     );
     const promptComponents = promptBuilderService.buildPromptComponents({
       question: text,
@@ -1067,7 +1092,8 @@ class LLMService {
     activeProfile,
     programmingLanguage,
     responseGuidance = '',
-    customSkill = ''
+    customSkill = '',
+    customCodingLanguage = ''
   ) {
     const intelligentPrompt = this.getIntelligentTranscriptionPrompt(
       activeSkill === 'custom' ? '' : activeSkill
@@ -1082,7 +1108,7 @@ class LLMService {
       this.getLiveProjectContextGuidance(),
       skillAndProfilePrompt,
       this.getCustomSkillGuidance(activeSkill, customSkill),
-      this.getCodingLanguageGuidance(programmingLanguage)
+      this.getCodingLanguageGuidance(programmingLanguage, customCodingLanguage)
     ]
       .filter(Boolean)
       .join('\n\n');
@@ -1305,7 +1331,8 @@ Remember: Be intelligent about filtering - only provide detailed responses when 
     retrievalMetadata = {},
     responseGuidance = '',
     manualSessionContext = '',
-    customSkill = ''
+    customSkill = '',
+    customCodingLanguage = ''
   ) {
     if (!this.isInitialized) {
       throw new Error('LLM service not initialized. Check Gemini API key configuration.');
@@ -1324,7 +1351,8 @@ Remember: Be intelligent about filtering - only provide detailed responses when 
         selectedChunks,
         responseGuidance,
         manualSessionContext,
-        customSkill
+        customSkill,
+        customCodingLanguage
       );
       const geminiRequest = builtRequest.request;
       const knowledgeMetadata = this.createKnowledgeMetadata(
@@ -1378,7 +1406,8 @@ Remember: Be intelligent about filtering - only provide detailed responses when 
         retrievalMetadata,
         responseGuidance,
         manualSessionContext,
-        customSkill
+        customSkill,
+        customCodingLanguage
       );
     }
   }

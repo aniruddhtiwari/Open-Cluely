@@ -43,6 +43,12 @@ function normalizeCustomSkill(value) {
     : "";
 }
 
+function normalizeCustomCodingLanguage(value) {
+  return typeof value === "string"
+    ? value.replace(/\s+/g, " ").trim().slice(0, 80)
+    : "";
+}
+
 function isActionableAudioRequest(text) {
   const normalized = typeof text === "string" ? text.trim().toLowerCase() : "";
   if (!normalized) return false;
@@ -199,6 +205,7 @@ class ApplicationController {
     this.customSkill = "";
     this.activeProfile = "";
     this.codingLanguage = "";
+    this.customCodingLanguage = "";
     this.respondTo = "all";
     this.appearance = normalizeAppearance({
       windowOpacity: process.env.WINDOW_OPACITY,
@@ -1364,7 +1371,8 @@ class ApplicationController {
             delta
           });
         },
-        this.customSkill
+        this.customSkill,
+        this.customCodingLanguage
       );
       llmResult.metadata = { ...llmResult.metadata, messageId };
 
@@ -1483,7 +1491,8 @@ class ApplicationController {
         },
         responseGuidance,
         manualSessionContext,
-        this.customSkill
+        this.customSkill,
+        this.customCodingLanguage
       );
       llmResult.metadata = { ...llmResult.metadata, messageId, interactionId };
       sessionTelemetryManager.completeInteraction(interactionId, llmResult.response);
@@ -1742,7 +1751,8 @@ class ApplicationController {
         },
         responseGuidance,
         manualSessionContext,
-        this.customSkill
+        this.customSkill,
+        this.customCodingLanguage
       );
       llmResult.metadata = { ...llmResult.metadata, messageId, interactionId };
       sessionTelemetryManager.completeInteraction(interactionId, llmResult.response);
@@ -2172,6 +2182,7 @@ class ApplicationController {
     // distinguish "unset" from "stale value from a previous load".
     return {
       codingLanguage: this.codingLanguage || "",
+      customCodingLanguage: this.customCodingLanguage,
       customSkill: this.customSkill,
       respondTo: this.respondTo,
       activeSkill: this.activeSkill,
@@ -2208,6 +2219,12 @@ class ApplicationController {
           : "";
         windowManager.broadcastToAllWindows("coding-language-changed", {
           language: this.codingLanguage,
+        });
+      }
+      if (Object.prototype.hasOwnProperty.call(settings, "customCodingLanguage")) {
+        this.customCodingLanguage = normalizeCustomCodingLanguage(settings.customCodingLanguage);
+        windowManager.broadcastToAllWindows("custom-coding-language-changed", {
+          customCodingLanguage: this.customCodingLanguage,
         });
       }
       if (Object.prototype.hasOwnProperty.call(settings, "respondTo")) {
