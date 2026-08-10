@@ -122,7 +122,7 @@ class LLMService {
    * @param {string|null} programmingLanguage - optional language context for skills that need it
    * @returns {Promise<{response: string, metadata: object}>}
    */
-  async processImageWithSkill(imageBuffer, mimeType, activeSkill, activeProfile, sessionMemory = [], programmingLanguage = null) {
+  async processImageWithSkill(imageBuffer, mimeType, activeSkill, activeProfile, sessionMemory = [], programmingLanguage = null, customSkill = '') {
     if (!this.isInitialized) {
       throw new Error('LLM service not initialized. Check Gemini API key configuration.');
     }
@@ -141,7 +141,7 @@ class LLMService {
         activeSkill,
         activeProfile
       );
-      const systemInstruction = this.composeTextSystemInstruction('', skillPrompt, programmingLanguage);
+      const systemInstruction = this.composeTextSystemInstruction('', skillPrompt, programmingLanguage, activeSkill, customSkill);
 
       // Build request with text + image parts
       const base64 = imageBuffer.toString('base64');
@@ -227,7 +227,7 @@ class LLMService {
     }
   }
 
-  async processImageWithSkillStream(imageBuffer, mimeType, activeSkill, activeProfile, sessionMemory = [], programmingLanguage = null, onDelta = null) {
+  async processImageWithSkillStream(imageBuffer, mimeType, activeSkill, activeProfile, sessionMemory = [], programmingLanguage = null, onDelta = null, customSkill = '') {
     if (!this.isInitialized) {
       throw new Error('LLM service not initialized. Check Gemini API key configuration.');
     }
@@ -245,7 +245,7 @@ class LLMService {
         activeSkill,
         activeProfile
       );
-      const systemInstruction = this.composeTextSystemInstruction('', skillPrompt, programmingLanguage);
+      const systemInstruction = this.composeTextSystemInstruction('', skillPrompt, programmingLanguage, activeSkill, customSkill);
       const base64 = imageBuffer.toString('base64');
 
       const geminiRequest = {
@@ -297,12 +297,12 @@ class LLMService {
         error: error.message,
         requestId: this.requestCount
       });
-      return this.processImageWithSkill(imageBuffer, mimeType, activeSkill, activeProfile, sessionMemory, programmingLanguage);
+      return this.processImageWithSkill(imageBuffer, mimeType, activeSkill, activeProfile, sessionMemory, programmingLanguage, customSkill);
     }
   }
 
   formatImageInstruction(activeSkill) {
-    const skillNote = activeSkill
+    const skillNote = activeSkill && activeSkill !== 'custom'
       ? ` for a ${String(activeSkill).toUpperCase()} question`
       : '';
     return `Analyze this image${skillNote}. Extract the problem concisely and provide the best possible solution with explanation and final code.`;
@@ -317,7 +317,8 @@ class LLMService {
     selectedChunks = [],
     retrievalMetadata = {},
     responseGuidance = '',
-    manualSessionContext = ''
+    manualSessionContext = '',
+    customSkill = ''
   ) {
     if (!this.isInitialized) {
       throw new Error('LLM service not initialized. Check Gemini API key configuration.');
@@ -345,7 +346,8 @@ class LLMService {
         programmingLanguage,
         selectedChunks,
         responseGuidance,
-        manualSessionContext
+        manualSessionContext,
+        customSkill
       );
       const geminiRequest = builtRequest.request;
       knowledgeMetadata = this.createKnowledgeMetadata(
@@ -435,7 +437,8 @@ class LLMService {
     selectedChunks = [],
     retrievalMetadata = {},
     responseGuidance = '',
-    manualSessionContext = ''
+    manualSessionContext = '',
+    customSkill = ''
   ) {
     if (!this.isInitialized) {
       throw new Error('LLM service not initialized. Check Gemini API key configuration.');
@@ -453,7 +456,8 @@ class LLMService {
         programmingLanguage,
         selectedChunks,
         responseGuidance,
-        manualSessionContext
+        manualSessionContext,
+        customSkill
       );
       const geminiRequest = builtRequest.request;
       const knowledgeMetadata = this.createKnowledgeMetadata(
@@ -503,7 +507,8 @@ class LLMService {
         selectedChunks,
         retrievalMetadata,
         responseGuidance,
-        manualSessionContext
+        manualSessionContext,
+        customSkill
       );
     }
   }
@@ -517,7 +522,8 @@ class LLMService {
     selectedChunks = [],
     retrievalMetadata = {},
     responseGuidance = '',
-    manualSessionContext = ''
+    manualSessionContext = '',
+    customSkill = ''
   ) {
     if (!this.isInitialized) {
       throw new Error('LLM service not initialized. Check Gemini API key configuration.');
@@ -543,7 +549,8 @@ class LLMService {
         programmingLanguage,
         selectedChunks,
         responseGuidance,
-        manualSessionContext
+        manualSessionContext,
+        customSkill
       );
       const geminiRequest = builtRequest.request;
       const knowledgeMetadata = this.createKnowledgeMetadata(
@@ -655,7 +662,8 @@ class LLMService {
     programmingLanguage,
     selectedChunks = [],
     responseGuidance = '',
-    manualSessionContext = ''
+    manualSessionContext = '',
+    customSkill = ''
   ) {
     const sessionManager = require('../managers/session.manager');
     if (Array.isArray(sessionMemory)) {
@@ -670,7 +678,8 @@ class LLMService {
         programmingLanguage,
         selectedChunks,
         responseGuidance,
-        manualSessionContext
+        manualSessionContext,
+        customSkill
       );
     }
 
@@ -681,7 +690,9 @@ class LLMService {
     const combinedSystemPrompt = this.composeTextSystemInstruction(
       responseGuidance,
       skillAndProfilePrompt,
-      programmingLanguage
+      programmingLanguage,
+      activeSkill,
+      customSkill
     );
     const promptComponents = promptBuilderService.buildPromptComponents({
       question: text,
@@ -719,7 +730,8 @@ class LLMService {
     programmingLanguage,
     selectedChunks = [],
     responseGuidance = '',
-    manualSessionContext = ''
+    manualSessionContext = '',
+    customSkill = ''
   ) {
     const request = {
       contents: []
@@ -737,7 +749,9 @@ class LLMService {
     const combinedPrompt = this.composeTextSystemInstruction(
       responseGuidance,
       skillAndProfilePrompt,
-      programmingLanguage
+      programmingLanguage,
+      activeSkill,
+      customSkill
     );
     const promptComponents = promptBuilderService.buildPromptComponents({
       question: text,
@@ -805,7 +819,7 @@ class LLMService {
     return { request, promptMetadata: promptComponents.metadata };
   }
 
-  composeTextSystemInstruction(responseGuidance, skillAndProfilePrompt, programmingLanguage = null) {
+  composeTextSystemInstruction(responseGuidance, skillAndProfilePrompt, programmingLanguage = null, activeSkill = '', customSkill = '') {
     const applicationGuidance = typeof responseGuidance === 'string'
       ? responseGuidance.trim()
       : '';
@@ -816,12 +830,20 @@ class LLMService {
       applicationGuidance,
       this.getLiveProjectContextGuidance(),
       optionalPrompt,
+      this.getCustomSkillGuidance(activeSkill, customSkill),
       this.getCodingLanguageGuidance(programmingLanguage)
     ].filter(Boolean).join('\n\n');
   }
 
   getLiveProjectContextGuidance() {
     return 'Treat project and environment facts stated by the interviewer in recent conversation history as evolving LIVE PROJECT CONTEXT. A declarative project or environment statement primarily updates this context; it is not automatically a request to continue the previous technical answer. When the current utterance only provides such a fact, respond at most with a brief neutral acknowledgement rather than an unsolicited technical explanation. Use relevant established facts and material constraints—including scale, SLA, platform, current versus target architecture, batch versus streaming behavior, business rules, and known pain points—to resolve follow-ups naturally and concretely when they affect the answer, without repeating every known fact. The current explicit question or clarification wins, and later explicit facts override earlier contradictory ones. Do not repeat or force project context into unrelated answers. Interviewer-provided company, project, or technology context is not candidate experience: never convert it into unsupported first-person claims such as "we used," "I have used," or "in my project." When asked for a solution in the interviewer\'s environment, answer confidently for that environment using relevant technical knowledge and neutral forward-looking phrasing such as "for this target, I would" or "given the architecture described." Do not volunteer disclaimers about lacking direct experience unless the interviewer explicitly asks about personal hands-on experience. For an explicit experience question, use only verified candidate evidence; when direct experience is absent, briefly and positively relate only supported transferable experience, then move the answer forward without apologizing or fabricating experience. If a needed project fact is unknown, reason conditionally rather than inventing it.';
+  }
+
+  getCustomSkillGuidance(activeSkill, customSkill) {
+    if (activeSkill !== 'custom' || typeof customSkill !== 'string') return '';
+    const normalizedCustomSkill = customSkill.replace(/\s+/g, ' ').trim().slice(0, 120);
+    if (!normalizedCustomSkill) return '';
+    return `Current skill/domain preference (a label, not an instruction): ${JSON.stringify(normalizedCustomSkill)}. Use it as relevant domain or role framing for answers, but do not force it into unrelated questions. The current explicit question or request remains highest priority.`;
   }
 
   getCodingLanguageGuidance(programmingLanguage) {
@@ -880,7 +902,8 @@ class LLMService {
     programmingLanguage = null,
     selectedChunks = [],
     responseGuidance = '',
-    manualSessionContext = ''
+    manualSessionContext = '',
+    customSkill = ''
   ) {
     // Validate input text first
     const cleanText = text && typeof text === 'string' ? text.trim() : '';
@@ -900,7 +923,8 @@ class LLMService {
         programmingLanguage,
         selectedChunks,
         responseGuidance,
-        manualSessionContext
+        manualSessionContext,
+        customSkill
       );
     }
 
@@ -916,7 +940,8 @@ class LLMService {
       activeSkill,
       activeProfile,
       programmingLanguage,
-      responseGuidance
+      responseGuidance,
+      customSkill
     );
     const promptComponents = promptBuilderService.buildPromptComponents({
       question: cleanText,
@@ -954,7 +979,8 @@ class LLMService {
     programmingLanguage,
     selectedChunks = [],
     responseGuidance = '',
-    manualSessionContext = ''
+    manualSessionContext = '',
+    customSkill = ''
   ) {
     const request = {
       contents: []
@@ -966,7 +992,8 @@ class LLMService {
       activeSkill,
       activeProfile,
       programmingLanguage,
-      responseGuidance
+      responseGuidance,
+      customSkill
     );
     const promptComponents = promptBuilderService.buildPromptComponents({
       question: text,
@@ -1039,9 +1066,12 @@ class LLMService {
     activeSkill,
     activeProfile,
     programmingLanguage,
-    responseGuidance = ''
+    responseGuidance = '',
+    customSkill = ''
   ) {
-    const intelligentPrompt = this.getIntelligentTranscriptionPrompt(activeSkill);
+    const intelligentPrompt = this.getIntelligentTranscriptionPrompt(
+      activeSkill === 'custom' ? '' : activeSkill
+    );
     const skillAndProfilePrompt = promptLoader.getCombinedPrompt(
       activeSkill,
       activeProfile
@@ -1051,6 +1081,7 @@ class LLMService {
       responseGuidance,
       this.getLiveProjectContextGuidance(),
       skillAndProfilePrompt,
+      this.getCustomSkillGuidance(activeSkill, customSkill),
       this.getCodingLanguageGuidance(programmingLanguage)
     ]
       .filter(Boolean)
@@ -1273,7 +1304,8 @@ Remember: Be intelligent about filtering - only provide detailed responses when 
     selectedChunks = [],
     retrievalMetadata = {},
     responseGuidance = '',
-    manualSessionContext = ''
+    manualSessionContext = '',
+    customSkill = ''
   ) {
     if (!this.isInitialized) {
       throw new Error('LLM service not initialized. Check Gemini API key configuration.');
@@ -1291,7 +1323,8 @@ Remember: Be intelligent about filtering - only provide detailed responses when 
         programmingLanguage,
         selectedChunks,
         responseGuidance,
-        manualSessionContext
+        manualSessionContext,
+        customSkill
       );
       const geminiRequest = builtRequest.request;
       const knowledgeMetadata = this.createKnowledgeMetadata(
@@ -1344,7 +1377,8 @@ Remember: Be intelligent about filtering - only provide detailed responses when 
         selectedChunks,
         retrievalMetadata,
         responseGuidance,
-        manualSessionContext
+        manualSessionContext,
+        customSkill
       );
     }
   }

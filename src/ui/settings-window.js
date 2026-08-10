@@ -21,6 +21,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const windowGapInput = document.getElementById('windowGap');
     const codingLanguageSelect = document.getElementById('codingLanguage');
 	const activeSkillSelect = document.getElementById('activeSkill');
+	const customSkillRow = document.getElementById('customSkillRow');
+	const customSkillInput = document.getElementById('customSkill');
 	const activeProfileSelect = document.getElementById('activeProfile');
 	const iconGrid = document.getElementById('iconGrid');
     const windowOpacityInput = document.getElementById('windowOpacity');
@@ -56,7 +58,7 @@ document.addEventListener('DOMContentLoaded', () => {
             }
 
             const options = await window.electronAPI.getAvailablePromptOptions();
-            populatePromptSelect(
+            populateSkillSelect(
                 activeSkillSelect,
                 options.skills,
                 settings.activeSkill,
@@ -70,7 +72,7 @@ document.addEventListener('DOMContentLoaded', () => {
             );
         } catch (error) {
             console.error('Failed to load dynamic prompt options:', error);
-            populatePromptSelect(activeSkillSelect, [], '', 'No skills found');
+            populateSkillSelect(activeSkillSelect, [], settings.activeSkill, 'No skills found');
             populatePromptSelect(activeProfileSelect, [], '', 'No profiles found');
         }
     };
@@ -164,6 +166,8 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         if (activeSkillSelect) activeSkillSelect.value = settings.activeSkill || '';
+        if (customSkillInput) customSkillInput.value = settings.customSkill || '';
+        updateCustomSkillVisibility();
 
 		if (activeProfileSelect) activeProfileSelect.value = settings.activeProfile || '';
 
@@ -204,6 +208,12 @@ document.addEventListener('DOMContentLoaded', () => {
         window.electronAPI.receive('skill-updated', (_event, data) => {
             if (activeSkillSelect && data && Object.prototype.hasOwnProperty.call(data, 'skill')) {
                 activeSkillSelect.value = data.skill || '';
+                updateCustomSkillVisibility();
+            }
+        });
+        window.electronAPI.receive('custom-skill-changed', (_event, data) => {
+            if (customSkillInput && data && Object.prototype.hasOwnProperty.call(data, 'customSkill')) {
+                customSkillInput.value = data.customSkill || '';
             }
         });
         window.electronAPI.receive('profile-updated', (_event, data) => {
@@ -245,6 +255,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (windowGapInput) settings.windowGap = windowGapInput.value;
         if (codingLanguageSelect) settings.codingLanguage = codingLanguageSelect.value;
         if (activeSkillSelect) settings.activeSkill = activeSkillSelect.value;
+        if (customSkillInput) settings.customSkill = customSkillInput.value;
         if (activeProfileSelect) settings.activeProfile = activeProfileSelect.value;
         if (windowOpacityInput) settings.windowOpacity = Number(windowOpacityInput.value) / 100;
         if (responseFontSizeInput) settings.responseFontSize = Number(responseFontSizeInput.value);
@@ -286,6 +297,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Add event listeners for all inputs
     const inputs = [
         respondToSelect,
+        customSkillInput,
         azureKeyInput,
         azureRegionInput,
         whisperCommandInput,
@@ -330,6 +342,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Skill selection handler
     if (activeSkillSelect) {
         activeSkillSelect.addEventListener('change', (e) => {
+            updateCustomSkillVisibility();
             saveSettings();
             // Also update the main window
             window.api.send('update-skill', e.target.value);
@@ -352,6 +365,21 @@ document.addEventListener('DOMContentLoaded', () => {
             responseTextColor: responseTextColorInput.value,
             responseBackgroundColor: responseBackgroundColorInput.value
         });
+    };
+
+    const updateCustomSkillVisibility = () => {
+        if (!customSkillRow) return;
+        customSkillRow.style.display = activeSkillSelect && activeSkillSelect.value === 'custom'
+            ? ''
+            : 'none';
+    };
+
+    const populateSkillSelect = (select, items, savedValue, emptyLabel) => {
+        populatePromptSelect(select, items, savedValue, emptyLabel);
+        if (!select) return;
+        select.appendChild(new Option('Custom...', 'custom'));
+        if (savedValue === 'custom') select.value = 'custom';
+        updateCustomSkillVisibility();
     };
     [windowOpacityInput, responseFontSizeInput, responseTextColorInput, responseBackgroundColorInput].forEach(input => {
         if (input) input.addEventListener('input', saveAppearance);

@@ -7,6 +7,7 @@ const MAX_SESSION_DOCUMENT_FILE_SIZE_BYTES = 10 * 1024 * 1024;
 const ALLOWED_SESSION_DOCUMENT_EXTENSIONS = new Set([".txt", ".md", ".markdown", ".docx", ".pdf", ".pptx", ".csv", ".xlsx", ".xls"]);
 const ALLOWED_SESSION_EVIDENCE_TYPES = new Set(["candidate", "job", "reference", "unknown"]);
 const ALLOWED_AUDIO_RESPONSE_MODES = new Set(["all"]);
+const CUSTOM_SKILL_ID = "custom";
 const DEFAULT_APPEARANCE = Object.freeze({
   windowOpacity: 1,
   responseFontSize: 14,
@@ -34,6 +35,12 @@ function normalizeSessionEvidenceType(value) {
 function normalizeAudioResponseMode(value) {
   const normalized = typeof value === "string" ? value.trim().toLowerCase() : "";
   return ALLOWED_AUDIO_RESPONSE_MODES.has(normalized) ? normalized : "all";
+}
+
+function normalizeCustomSkill(value) {
+  return typeof value === "string"
+    ? value.replace(/\s+/g, " ").trim().slice(0, 120)
+    : "";
 }
 
 function isActionableAudioRequest(text) {
@@ -189,6 +196,7 @@ class ApplicationController {
     // Interview presets are session controls. Start every app session without
     // assumptions, even if older versions persisted values in .env.
     this.activeSkill = "";
+    this.customSkill = "";
     this.activeProfile = "";
     this.codingLanguage = "";
     this.respondTo = "all";
@@ -1355,7 +1363,8 @@ class ApplicationController {
             messageId,
             delta
           });
-        }
+        },
+        this.customSkill
       );
       llmResult.metadata = { ...llmResult.metadata, messageId };
 
@@ -1473,7 +1482,8 @@ class ApplicationController {
           retrievalTotalChunks: retrieval.totalChunks
         },
         responseGuidance,
-        manualSessionContext
+        manualSessionContext,
+        this.customSkill
       );
       llmResult.metadata = { ...llmResult.metadata, messageId, interactionId };
       sessionTelemetryManager.completeInteraction(interactionId, llmResult.response);
@@ -1731,7 +1741,8 @@ class ApplicationController {
           retrievalTotalChunks: retrieval.totalChunks
         },
         responseGuidance,
-        manualSessionContext
+        manualSessionContext,
+        this.customSkill
       );
       llmResult.metadata = { ...llmResult.metadata, messageId, interactionId };
       sessionTelemetryManager.completeInteraction(interactionId, llmResult.response);
@@ -2161,6 +2172,7 @@ class ApplicationController {
     // distinguish "unset" from "stale value from a previous load".
     return {
       codingLanguage: this.codingLanguage || "",
+      customSkill: this.customSkill,
       respondTo: this.respondTo,
       activeSkill: this.activeSkill,
       activeProfile: this.activeProfile,
@@ -2205,12 +2217,20 @@ class ApplicationController {
         });
       }
       if (Object.prototype.hasOwnProperty.call(settings, "activeSkill")) {
-        this.activeSkill = resolveAvailablePromptId(
-          promptLoader.getAvailableSkills(),
-          settings.activeSkill
-        );
+        const requestedSkill = typeof settings.activeSkill === "string"
+          ? settings.activeSkill.trim()
+          : "";
+        this.activeSkill = requestedSkill === CUSTOM_SKILL_ID
+          ? CUSTOM_SKILL_ID
+          : resolveAvailablePromptId(promptLoader.getAvailableSkills(), requestedSkill);
         windowManager.broadcastToAllWindows("skill-updated", {
           skill: this.activeSkill,
+        });
+      }
+      if (Object.prototype.hasOwnProperty.call(settings, "customSkill")) {
+        this.customSkill = normalizeCustomSkill(settings.customSkill);
+        windowManager.broadcastToAllWindows("custom-skill-changed", {
+          customSkill: this.customSkill,
         });
       }
       if (Object.prototype.hasOwnProperty.call(settings, "activeProfile")) {
