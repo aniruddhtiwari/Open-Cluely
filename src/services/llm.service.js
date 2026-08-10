@@ -814,9 +814,14 @@ class LLMService {
       : '';
     return [
       applicationGuidance,
+      this.getLiveProjectContextGuidance(),
       optionalPrompt,
       this.getCodingLanguageGuidance(programmingLanguage)
     ].filter(Boolean).join('\n\n');
+  }
+
+  getLiveProjectContextGuidance() {
+    return 'Treat project and environment facts stated by the interviewer in recent conversation history as evolving LIVE PROJECT CONTEXT. A declarative project or environment statement primarily updates this context; it is not automatically a request to continue the previous technical answer. When the current utterance only provides such a fact, respond at most with a brief neutral acknowledgement rather than an unsolicited technical explanation. Use relevant established facts and material constraints—including scale, SLA, platform, current versus target architecture, batch versus streaming behavior, business rules, and known pain points—to resolve follow-ups naturally and concretely when they affect the answer, without repeating every known fact. The current explicit question or clarification wins, and later explicit facts override earlier contradictory ones. Do not repeat or force project context into unrelated answers. Interviewer-provided company, project, or technology context is not candidate experience: never convert it into unsupported first-person claims such as "we used," "I have used," or "in my project." When asked for a solution in the interviewer\'s environment, answer confidently for that environment using relevant technical knowledge and neutral forward-looking phrasing such as "for this target, I would" or "given the architecture described." Do not volunteer disclaimers about lacking direct experience unless the interviewer explicitly asks about personal hands-on experience. For an explicit experience question, use only verified candidate evidence; when direct experience is absent, briefly and positively relate only supported transferable experience, then move the answer forward without apologizing or fabricating experience. If a needed project fact is unknown, reason conditionally rather than inventing it.';
   }
 
   getCodingLanguageGuidance(programmingLanguage) {
@@ -1044,6 +1049,7 @@ class LLMService {
     return [
       intelligentPrompt,
       responseGuidance,
+      this.getLiveProjectContextGuidance(),
       skillAndProfilePrompt,
       this.getCodingLanguageGuidance(programmingLanguage)
     ]
