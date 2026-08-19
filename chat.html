@@ -84,6 +84,14 @@
         background: rgba(255, 255, 255, 0.22);
         color: #fff;
       }
+      .export-status {
+        color: rgba(255, 255, 255, 0.8);
+        font-size: 11px;
+        white-space: nowrap;
+      }
+      .export-status.error {
+        color: #ff8a94;
+      }
       .recording-indicator {
         width: 8px;
         height: 8px;
@@ -872,6 +880,7 @@
           <div class="recording-indicator" id="recordingIndicator"></div>
         </div>
         <div class="header-actions">
+          <span class="export-status" id="exportStatus" role="status" aria-live="polite"></span>
           <button class="icon-button" id="exportTranscriptBtn" title="Export transcript" aria-label="Export transcript">
             <i class="fas fa-download"></i>
           </button>
@@ -959,6 +968,7 @@
       const listeningDuration = document.getElementById('listeningDuration');
       const interimOverlay = document.getElementById('interimOverlay');
       const exportTranscriptBtn = document.getElementById('exportTranscriptBtn');
+      const exportStatus = document.getElementById('exportStatus');
       const clearHistoryBtn = document.getElementById('clearHistoryBtn');
       const closeChatBtn = document.getElementById('closeChatBtn');
       const sessionDocumentStrip = document.getElementById('sessionDocumentStrip');
@@ -981,6 +991,7 @@
       let listeningTimer = null;
       let speechAvailable = false;
       let sessionDocumentStatusTimer = null;
+      let exportStatusTimer = null;
       const EVIDENCE_TYPE_LABELS = Object.freeze({
         candidate: 'Candidate / Project',
         job: 'Job Description',
@@ -1698,11 +1709,12 @@
         whysperAPI.onSpeechStatus((event, data) => {
           if (data && data.status) {
             addMessage(data.status, 'system');
+            const status = String(data.status).toLowerCase();
 
-            if (data.status.includes('started') || data.status.includes('Recording')) {
-              handleRecordingStarted();
-            } else if (data.status.includes('stopped') || data.status.includes('ended')) {
+            if (status.includes('stopped') || status.includes('ended')) {
               handleRecordingStopped();
+            } else if (status.includes('started')) {
+              handleRecordingStarted();
             }
           }
         });
@@ -1768,15 +1780,31 @@
           exportTranscriptBtn.disabled = true;
           try {
             const result = await whysperAPI.exportSessionTelemetry();
-            if (result && !result.success && !result.canceled) {
-              console.warn(result.message || 'Session transcript was not exported');
+            if (result && result.success) {
+              setExportStatus('Transcript saved.');
+            } else if (result && !result.canceled) {
+              console.warn(result.error || 'Session transcript was not exported');
+              setExportStatus('Could not save transcript.', true);
             }
           } catch (error) {
             console.error('Failed to export session transcript:', error);
+            setExportStatus('Could not save transcript.', true);
           } finally {
             exportTranscriptBtn.disabled = false;
           }
         });
+      }
+
+      function setExportStatus(message, isError = false) {
+        if (!exportStatus) return;
+        if (exportStatusTimer) clearTimeout(exportStatusTimer);
+        exportStatus.textContent = message;
+        exportStatus.classList.toggle('error', isError);
+        exportStatusTimer = setTimeout(() => {
+          exportStatus.textContent = '';
+          exportStatus.classList.remove('error');
+          exportStatusTimer = null;
+        }, 3000);
       }
 
       if (addSessionDocumentsBtn) {

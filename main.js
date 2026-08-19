@@ -746,19 +746,23 @@ class ApplicationController {
       return { success: true, removedCount: sessionTelemetryManager.clear() };
     });
 
-    ipcMain.handle("export-session-telemetry", async () => {
+    ipcMain.handle("export-session-telemetry", async (event) => {
       if (!sessionTelemetryManager.isEnabled()) {
-        return { success: false, disabled: true, message: "Session telemetry is disabled" };
+        return { success: false, disabled: true, error: "Session telemetry is disabled" };
       }
       try {
-        const result = await dialog.showSaveDialog({
+        const ownerWindow = BrowserWindow.fromWebContents(event.sender);
+        const saveDialogOptions = {
           title: "Export Session Transcript",
           defaultPath: `opencluely-session-${new Date().toISOString().replace(/[:.]/g, "-")}.md`,
           filters: [
             { name: "Markdown", extensions: ["md"] },
             { name: "JSON", extensions: ["json"] }
           ]
-        });
+        };
+        const result = ownerWindow && !ownerWindow.isDestroyed()
+          ? await dialog.showSaveDialog(ownerWindow, saveDialogOptions)
+          : await dialog.showSaveDialog(saveDialogOptions);
         if (result.canceled || !result.filePath) return { success: false, canceled: true };
         const isJSON = path.extname(result.filePath).toLowerCase() === ".json";
         const content = isJSON
@@ -766,10 +770,10 @@ class ApplicationController {
           : sessionTelemetryManager.exportMarkdown();
         if (typeof content !== "string") return content;
         await fs.promises.writeFile(result.filePath, content, "utf8");
-        return { success: true, format: isJSON ? "json" : "markdown" };
+        return { success: true, format: isJSON ? "json" : "markdown", filePath: result.filePath };
       } catch (error) {
         logger.error("Failed to export session telemetry", { error: error.message });
-        return { success: false, message: "Unable to export the session transcript" };
+        return { success: false, error: "Unable to export the session transcript" };
       }
     });
 
