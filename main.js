@@ -37,6 +37,48 @@ function normalizeAudioResponseMode(value) {
   return ALLOWED_AUDIO_RESPONSE_MODES.has(normalized) ? normalized : "all";
 }
 
+const OBVIOUS_SPEECH_ACKNOWLEDGEMENTS = new Set([
+  "okay", "ok", "right", "alright", "got it", "makes sense", "that makes sense",
+  "sounds good", "sure", "perfect", "great", "understood", "interesting", "thank you",
+  "thanks", "okay right", "okay that makes sense", "right that makes sense"
+]);
+
+function classifyObviousNonActionableSpeech(text) {
+  const raw = typeof text === "string" ? text.trim() : "";
+  if (!raw) return { bypass: false };
+
+  const normalized = raw
+    .toLowerCase()
+    .replace(/[’]/g, "'")
+    .replace(/[^a-z0-9'\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!normalized) return { bypass: false };
+
+  const questionOrRequestStart = /^(?:(?:so|and|but)\s+)?(?:what|why|how|when|where|which|who)\b/;
+  const auxiliaryQuestionStart = /^(?:can you|could you|would you|will you|do you|did you|have you|has anyone|are you|were you|is there|are there)\b/;
+  const interviewRequestStart = /^(?:please\s+)?(?:tell me|walk me through|explain|describe|give me|show me|compare|design|discuss)\b/;
+  const assistanceRequest = /\b(?:how should i|what should i|how do i|what do i say|can you explain|can you help|how would i|how would you|what would i)\b/;
+  if (raw.includes("?") || questionOrRequestStart.test(normalized) ||
+      auxiliaryQuestionStart.test(normalized) || interviewRequestStart.test(normalized) ||
+      assistanceRequest.test(normalized)) {
+    return { bypass: false };
+  }
+
+  if (OBVIOUS_SPEECH_ACKNOWLEDGEMENTS.has(normalized)) {
+    return { bypass: true, reason: "acknowledgement" };
+  }
+
+  const contextStatementStart = /^(?:i currently work|so currently i work|i work at|i am currently|i'm currently|i have (?:about )?[a-z0-9-]+ years|i haven't worked|i have not worked|i don't have experience|i do not have experience|i haven't used|i have not used|in my current role|in my current project|in my project|my current project|my team|our team|our company|we process|we ingest|we use|we mainly use|we primarily use|this role|this position|the role|the position|the team|the next round|the next interview|we're looking for|we are looking for)\b/;
+  if (contextStatementStart.test(normalized)) {
+    return { bypass: true, reason: "context-statement" };
+  }
+
+  if (normalized.split(" ").length <= 5) return { bypass: false };
+
+  return { bypass: false };
+}
+
 function normalizeCustomSkill(value) {
   return typeof value === "string"
     ? value.replace(/\s+/g, " ").trim().slice(0, 120)
@@ -1679,6 +1721,16 @@ class ApplicationController {
       // Store only the finalized/coalesced utterance, not each partial speech fragment.
       sessionManager.addUserInput(cleanText, 'speech');
 
+      const localSpeechDecision = classifyObviousNonActionableSpeech(cleanText);
+      if (localSpeechDecision.bypass) {
+        sessionTelemetryManager.completeInteraction(interactionId, null);
+        logger.info("Speech LLM bypassed locally", {
+          interactionId,
+          reason: localSpeechDecision.reason
+        });
+        return;
+      }
+
       logger.info("Processing transcription with intelligent LLM response", {
         skill: this.activeSkill,
         textLength: cleanText.length,
@@ -1730,7 +1782,21 @@ class ApplicationController {
         selectedChunkIds: retrieval.selectedChunks.map(chunk => chunk.id)
       });
       sessionTelemetryManager.mark(interactionId, "llmRequestStartedAt");
+      const noResponseToken = llmService.getNoResponseToken();
       let firstChunkRecorded = false;
+      let initialResponseBuffer = "";
+      let responseStreamReleased = false;
+      const sendResponseChunk = (delta) => {
+        if (!firstChunkRecorded) {
+          firstChunkRecorded = true;
+          sessionTelemetryManager.recordFirstChunk(interactionId);
+        }
+        this.sendToVoiceResponseWindows("transcription-llm-response-chunk", {
+          messageId,
+          interactionId,
+          delta
+        });
+      };
       const llmResult = await llmService.processTranscriptionWithIntelligentResponseStream(
         cleanText,
         this.activeSkill,
@@ -1738,15 +1804,21 @@ class ApplicationController {
         conversationHistory,
         this.codingLanguage || null,
         (delta) => {
-          if (!firstChunkRecorded) {
-            firstChunkRecorded = true;
-            sessionTelemetryManager.recordFirstChunk(interactionId);
+          if (responseStreamReleased) {
+            sendResponseChunk(delta);
+            return;
           }
-          this.sendToVoiceResponseWindows("transcription-llm-response-chunk", {
-            messageId,
-            interactionId,
-            delta
-          });
+
+          initialResponseBuffer += delta;
+          const detectionText = initialResponseBuffer.trimStart();
+          const possibleTokenPrefix = noResponseToken.startsWith(detectionText);
+          const tokenWithOnlyTrailingWhitespace = detectionText.startsWith(noResponseToken) &&
+            detectionText.slice(noResponseToken.length).trim().length === 0;
+          if (possibleTokenPrefix || tokenWithOnlyTrailingWhitespace) return;
+
+          responseStreamReleased = true;
+          sendResponseChunk(initialResponseBuffer);
+          initialResponseBuffer = "";
         },
         retrieval.selectedChunks,
         {
@@ -1759,6 +1831,27 @@ class ApplicationController {
         this.customCodingLanguage
       );
       llmResult.metadata = { ...llmResult.metadata, messageId, interactionId };
+      const finalResponse = typeof llmResult.response === "string" ? llmResult.response : "";
+      const isNoResponse = finalResponse.trim() === noResponseToken;
+      const isEmptyResponse = finalResponse.trim().length === 0;
+      if (isNoResponse || isEmptyResponse) {
+        sessionTelemetryManager.completeInteraction(interactionId, null);
+        this.sendToVoiceResponseWindows("transcription-no-response", {
+          messageId,
+          interactionId
+        });
+        logger.info("Speech response suppressed", {
+          interactionId,
+          emptyResponse: isEmptyResponse
+        });
+        return;
+      }
+
+      if (!responseStreamReleased && initialResponseBuffer && llmResult.metadata.streamed === true) {
+        responseStreamReleased = true;
+        sendResponseChunk(initialResponseBuffer);
+        initialResponseBuffer = "";
+      }
       sessionTelemetryManager.completeInteraction(interactionId, llmResult.response);
 
       // Add LLM response to session memory

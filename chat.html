@@ -1621,6 +1621,7 @@
         if (!stream.interactionId && interactionId) stream.interactionId = interactionId;
         const wasNearBottom = isNearMessagesBottom();
         const isFirstChunk = stream.text.length === 0 && delta.length > 0;
+        if (isFirstChunk) hideThinkingIndicator(messageId);
         stream.text += delta;
         renderAssistantText(stream.textDiv, stream.text);
         if (isFirstChunk) acknowledgeTelemetryRender(stream.interactionId, 'chat');
@@ -1742,7 +1743,11 @@
 
         // Replace transcription LLM handler to store text + snippets
         whysperAPI.onTranscriptionLlmResponseStart((event, data) => {
-          if (data && data.messageId) startAssistantStream(data.messageId, data.interactionId || null);
+          if (data && data.messageId) {
+            const pendingSpeechThinking = chatMessages && chatMessages.querySelector('.message.assistant.thinking[data-thinking-for=""]');
+            if (pendingSpeechThinking) pendingSpeechThinking.dataset.thinkingFor = data.messageId;
+            startAssistantStream(data.messageId, data.interactionId || null);
+          }
         });
 
         whysperAPI.onTranscriptionLlmResponseChunk((event, data) => {
@@ -1759,6 +1764,16 @@
               renderAssistantResponse(data.response);
             }
           }
+        });
+
+        whysperAPI.onTranscriptionNoResponse((event, data) => {
+          if (!data || !data.messageId) return;
+          const stream = streamingResponses.get(data.messageId);
+          if (!stream) return;
+          if (data.interactionId && stream.interactionId && data.interactionId !== stream.interactionId) return;
+          if (stream.element) stream.element.remove();
+          streamingResponses.delete(data.messageId);
+          hideThinkingIndicator(data.messageId);
         });
       }
 
@@ -1793,6 +1808,7 @@
             exportTranscriptBtn.disabled = false;
           }
         });
+
       }
 
       function setExportStatus(message, isError = false) {

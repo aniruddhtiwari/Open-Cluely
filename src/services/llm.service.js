@@ -3,6 +3,7 @@ const logger = require('../core/logger').createServiceLogger('LLM');
 const config = require('../core/config');
 const { promptLoader } = require('../../prompt-loader');
 const promptBuilderService = require('./prompt-builder.service');
+const NO_RESPONSE_TOKEN = '[[NO_RESPONSE]]';
 
 class LLMService {
   constructor() {
@@ -1108,10 +1109,32 @@ class LLMService {
       this.getLiveProjectContextGuidance(),
       skillAndProfilePrompt,
       this.getCustomSkillGuidance(activeSkill, customSkill),
-      this.getCodingLanguageGuidance(programmingLanguage, customCodingLanguage)
+      this.getCodingLanguageGuidance(programmingLanguage, customCodingLanguage),
+      this.getSpeechResponseTriggerGuidance()
     ]
       .filter(Boolean)
       .join('\n\n');
+  }
+
+  getSpeechResponseTriggerGuidance() {
+    return `# CRITICAL RESPONSE TRIGGER RULE
+Both the interviewer and candidate may be captured by the same microphone.
+
+Only generate a candidate-facing answer when the latest speech contains a clear actionable question or request that requires the candidate to respond. Actionable speech includes direct questions; requests such as "Tell me", "Walk me through", "Explain", "Describe", or "Give me an example"; and short contextual follow-ups such as "Why?", "How?", "Example?", "Kafka?", or "What about scale?" Do not rely only on question marks.
+
+Non-actionable speech includes interviewer or recruiter explanations; job, company, or team information; acknowledgements; greetings; filler; incomplete or garbled fragments; the candidate answering, continuing an answer, or thinking aloud; and factual context updates.
+
+CANDIDATE / SELF-STATEMENT RULE — HIGH PRIORITY: A first-person factual statement, self-description, experience statement, correction, limitation, project fact, or continuation of an answer is normally live context, not a request for another answer. Statements such as "I currently work as a Senior Data Engineer", "I work at Nasdaq", "I have nine years of experience", "I haven't worked with Scala", "I don't have experience with Java", "I haven't used AI developer tools", "I have worked with Snowflake", "My current project uses Databricks", "In my project we ingest market data", "We process about 500 GB per day", "My team has eight engineers", "The architecture uses ADF and Databricks", "The way I handled that was", "So currently I", "In my current role", or "What I did was" should update live context without generating advice, an alternative answer, a technology explanation, a correction, or an acknowledgement. Return exactly ${NO_RESPONSE_TOKEN} unless the same utterance clearly asks for help or contains a genuine candidate-facing question or request. For example, "I haven't used Scala. How should I answer if they ask me about it?", "I currently use Snowflake. Can you explain clustering?", "My project uses Databricks. How should I describe the architecture?", and "I don't have AI experience. What should I say?" require normal answers.
+
+Interviewer context such as "We use AWS here", "Our team has seven engineers", "This role is hybrid", "The next round is technical", "We primarily use Python and SQL", or "We're looking for someone with Kafka experience" is also context-only unless it contains an actionable question or request for the candidate. Brief acknowledgements such as "Okay", "Right", or "That makes sense" are context-only.
+
+Before deciding or answering, use the current technical and conversational context to silently normalize obvious speech-to-text errors when one intended technical term is substantially more likely than the literal transcription. In a data-engineering context, examples may include "meddling architecture" as Medallion architecture, "sd type 2" as SCD Type 2, "scalar" as Scala, or "pie spark" as PySpark. Do not announce the correction and do not blindly autocorrect similar words. Normalize only with high contextual confidence; if multiple materially different interpretations remain plausible, do not confidently invent one.
+
+For non-actionable speech, do not answer, acknowledge, summarize, or explain that it is context. Do not say "Okay", "Understood", "Got it", or "No response needed". Instead return exactly ${NO_RESPONSE_TOKEN} and nothing else. If the latest speech is ambiguous and there is no clear need for the candidate to respond, prefer ${NO_RESPONSE_TOKEN}. Accuracy and silence are preferable to inventing an answer.`;
+  }
+
+  getNoResponseToken() {
+    return NO_RESPONSE_TOKEN;
   }
 
   getIntelligentTranscriptionPrompt(activeSkill) {

@@ -615,6 +615,21 @@
                     displayResponse({ content: streamingResponse }, { resize: false });
                     if (isFirstChunk) acknowledgeTelemetryRender(streamingInteractionId, 'aiResponse');
                 });
+
+                window.electronAPI.onTranscriptionNoResponse((event, data) => {
+                    if (!data || !data.messageId || streamingMessageId !== data.messageId) return;
+                    if (data.interactionId && streamingInteractionId && data.interactionId !== streamingInteractionId) return;
+                    streamingMessageId = null;
+                    streamingInteractionId = null;
+                    streamingResponse = '';
+                    hideLoadingState();
+
+                    const responseElement = document.getElementById('response-content');
+                    const hasExistingResponse = !!responseElement?.textContent?.trim();
+                    if (!hasExistingResponse && window.electronAPI?.closeWindow) {
+                        window.electronAPI.closeWindow();
+                    }
+                });
                 
                 // Listen for LLM response
                 window.electronAPI.onDisplayLlmResponse(function() {
