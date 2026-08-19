@@ -1393,27 +1393,30 @@ class ApplicationController {
     }
 
     const startTime = Date.now();
+    this._responseSeq = (this._responseSeq || 0) + 1;
+    const messageId = `img-${Date.now()}-${this._responseSeq}`;
 
     try {
-      windowManager.showLLMLoading();
+      windowManager.broadcastToAllWindows("transcription-llm-response-start", {
+        messageId,
+        skill: this.activeSkill
+      });
+      windowManager.showLLMLoading({ messageId });
 
   const capture = await captureService.captureAndProcess();
 
       if (!capture.imageBuffer || !capture.imageBuffer.length) {
-        windowManager.hideLLMResponse();
+        windowManager.broadcastToAllWindows("transcription-llm-response-error", {
+          messageId,
+          error: "AI response failed",
+          source: "screenshot"
+        });
         this.broadcastOCRError("Failed to capture screenshot image");
         return;
       }
 
       // Use image directly with LLM and active skill; do not send chat messages here
       const sessionHistory = sessionManager.getOptimizedHistory();
-
-      this._responseSeq = (this._responseSeq || 0) + 1;
-      const messageId = `img-${Date.now()}-${this._responseSeq}`;
-      windowManager.broadcastToAllWindows("transcription-llm-response-start", {
-        messageId,
-        skill: this.activeSkill
-      });
 
       const llmResult = await llmService.processImageWithSkillStream(
         capture.imageBuffer,
@@ -1455,7 +1458,11 @@ class ApplicationController {
         duration: Date.now() - startTime,
       });
 
-      windowManager.hideLLMResponse();
+      windowManager.broadcastToAllWindows("transcription-llm-response-error", {
+        messageId,
+        error: "AI response failed",
+        source: "screenshot"
+      });
       this.broadcastOCRError(error.message);
       
       sessionManager.addConversationEvent({
@@ -1477,6 +1484,7 @@ class ApplicationController {
       activeProfile: this.activeProfile,
       codingLanguage: this.codingLanguage
     });
+    let messageId = null;
     try {
       const conversationalContext = this.getConversationalRequestContext(text);
 
@@ -1485,13 +1493,13 @@ class ApplicationController {
 
       // Check if current skill needs programming language context
       this._responseSeq = (this._responseSeq || 0) + 1;
-      const messageId = `chat-${Date.now()}-${this._responseSeq}`;
+      messageId = `chat-${Date.now()}-${this._responseSeq}`;
       this.sendToStreamingResponseWindows("transcription-llm-response-start", {
         messageId,
         interactionId,
         skill: this.activeSkill
       });
-      windowManager.showLLMLoading();
+      windowManager.showLLMLoading({ messageId, interactionId });
 
       const cachedDocumentChunks = sessionManager.getSessionDocumentChunks();
       const { continuity, conversationHistory } = conversationalContext;
@@ -1587,7 +1595,14 @@ class ApplicationController {
         skill: this.activeSkill,
       });
 
-      windowManager.hideLLMResponse();
+      if (messageId) {
+        this.sendToStreamingResponseWindows("transcription-llm-response-error", {
+          messageId,
+          interactionId,
+          error: "AI response failed",
+          source: "typed"
+        });
+      }
       sessionManager.addConversationEvent({
         role: 'system',
         content: `LLM processing failed: ${error.message}`,
@@ -1762,7 +1777,7 @@ class ApplicationController {
         skill: this.activeSkill
       });
       if (this.shouldShowVoiceOverlay()) {
-        windowManager.showLLMLoading();
+        windowManager.showLLMLoading({ messageId, interactionId });
       }
 
       const cachedDocumentChunks = sessionManager.getSessionDocumentChunks();
@@ -1951,6 +1966,14 @@ class ApplicationController {
             skill: this.activeSkill
           }
         });
+        if (messageId) {
+          this.sendToVoiceResponseWindows("transcription-llm-response-error", {
+            messageId,
+            interactionId,
+            error: "AI response failed",
+            source: "speech"
+          });
+        }
       }
     }
   }

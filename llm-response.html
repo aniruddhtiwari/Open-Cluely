@@ -586,8 +586,9 @@
                 console.log('[LLM-RESPONSE] Setting up IPC listeners...');
                 
                 // Set up show-loading event listener
-                window.electronAPI.onShowLoading(() => {
+                window.electronAPI.onShowLoading((event, data) => {
                     console.log('[LLM-RESPONSE] show-loading received');
+                    if (!data?.messageId || data.messageId !== authoritativeMessageId) return;
                     showLoadingState();
                 });
                 window.electronAPI.onAppearanceChanged((_event, appearance) => applyAppearance(appearance));
@@ -622,6 +623,22 @@
                     streamingMessageId = null;
                     streamingInteractionId = null;
                     streamingResponse = '';
+                    hideLoadingState();
+
+                    const responseElement = document.getElementById('response-content');
+                    const hasExistingResponse = !!responseElement?.textContent?.trim();
+                    if (!hasExistingResponse && window.electronAPI?.closeWindow) {
+                        window.electronAPI.closeWindow();
+                    }
+                });
+
+                window.electronAPI.onTranscriptionLlmResponseError((event, data) => {
+                    if (!data?.messageId || data.messageId !== authoritativeMessageId) return;
+                    if (streamingMessageId === data.messageId) {
+                        streamingMessageId = null;
+                        streamingInteractionId = null;
+                        streamingResponse = '';
+                    }
                     hideLoadingState();
 
                     const responseElement = document.getElementById('response-content');

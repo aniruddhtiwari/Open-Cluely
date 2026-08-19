@@ -1821,6 +1821,14 @@
           streamingResponses.delete(data.messageId);
           hideThinkingIndicator(data.messageId);
         });
+
+        whysperAPI.onTranscriptionLlmResponseError((event, data) => {
+          if (!data?.messageId || data.messageId !== authoritativeMessageId) return;
+          const stream = streamingResponses.get(data.messageId);
+          if (stream?.element) stream.element.remove();
+          streamingResponses.delete(data.messageId);
+          hideThinkingIndicator(data.messageId);
+        });
       }
 
       // UI Event Listeners
