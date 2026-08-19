@@ -529,6 +529,7 @@
         let isInteractive = false;
         let scrollableElements = [];
         let initialized = false;
+        let authoritativeMessageId = null;
         let streamingMessageId = null;
         let streamingInteractionId = null;
         let streamingResponse = '';
@@ -596,6 +597,7 @@
 
                 window.electronAPI.onTranscriptionLlmResponseStart((event, data) => {
                     if (!data || !data.messageId) return;
+                    authoritativeMessageId = data.messageId;
                     streamingMessageId = data.messageId;
                     streamingInteractionId = data.interactionId || null;
                     streamingResponse = '';
@@ -603,11 +605,8 @@
 
                 window.electronAPI.onTranscriptionLlmResponseChunk((event, data) => {
                     if (!data || !data.messageId || typeof data.delta !== 'string' || !data.delta) return;
-                    if (streamingMessageId !== data.messageId) {
-                        streamingMessageId = data.messageId;
-                        streamingInteractionId = data.interactionId || null;
-                        streamingResponse = '';
-                    }
+                    if (data.messageId !== authoritativeMessageId) return;
+                    if (streamingMessageId !== data.messageId) return;
                     if (streamingResponse.length === 0 && !data.delta.trim()) return;
                     const isFirstChunk = streamingResponse.length === 0;
                     streamingResponse += data.delta;
@@ -617,7 +616,8 @@
                 });
 
                 window.electronAPI.onTranscriptionNoResponse((event, data) => {
-                    if (!data || !data.messageId || streamingMessageId !== data.messageId) return;
+                    if (!data || !data.messageId || data.messageId !== authoritativeMessageId) return;
+                    if (streamingMessageId !== data.messageId) return;
                     if (data.interactionId && streamingInteractionId && data.interactionId !== streamingInteractionId) return;
                     streamingMessageId = null;
                     streamingInteractionId = null;
@@ -646,12 +646,21 @@
                         }
                         
                         console.log('[LLM-RESPONSE] actualData keys:', actualData ? Object.keys(actualData) : 'null');
+
+                        const messageId = actualData?.metadata?.messageId;
+                        if (!messageId || messageId !== authoritativeMessageId) {
+                            console.log('[LLM-RESPONSE] Ignoring stale or unidentified final response');
+                            return;
+                        }
                         
                         const response = actualData?.content || actualData?.response;
                         console.log('[LLM-RESPONSE] response found:', !!response, 'length:', response?.length);
                         
                         if (!response) {
                             console.error('[LLM-RESPONSE] No response content found!');
+                            streamingMessageId = null;
+                            streamingInteractionId = null;
+                            streamingResponse = '';
                             hideLoadingState();
                             return;
                         }

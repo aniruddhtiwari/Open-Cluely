@@ -1443,6 +1443,7 @@ class ApplicationController {
       this.broadcastTranscriptionLLMResponse(llmResult);
 
       windowManager.showLLMResponse(llmResult.response, {
+        messageId,
         skill: this.activeSkill,
         processingTime: llmResult.metadata.processingTime,
         usedFallback: llmResult.metadata.usedFallback,
@@ -1573,6 +1574,7 @@ class ApplicationController {
       this.broadcastTranscriptionLLMResponse(llmResult);
 
       windowManager.showLLMResponse(llmResult.response, {
+        messageId,
         interactionId,
         skill: this.activeSkill,
         processingTime: llmResult.metadata.processingTime,
@@ -1876,6 +1878,7 @@ class ApplicationController {
       this.sendTranscriptionLLMResponseToVoiceTargets(llmResult);
       if (this.shouldShowVoiceOverlay()) {
         windowManager.showLLMResponse(llmResult.response, {
+          messageId,
           interactionId,
           skill: this.activeSkill,
           processingTime: llmResult.metadata.processingTime,
@@ -1920,6 +1923,7 @@ class ApplicationController {
         this.sendTranscriptionLLMResponseToVoiceTargets(fallbackResult);
         if (this.shouldShowVoiceOverlay()) {
           windowManager.showLLMResponse(fallbackResult.response, {
+            messageId,
             interactionId,
             skill: this.activeSkill,
             processingTime: fallbackResult.metadata.processingTime,

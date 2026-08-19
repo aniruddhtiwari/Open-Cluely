@@ -1013,6 +1013,7 @@
       let chatHistory = [];
       let pairSequence = 0;
       const pendingPairIds = [];
+      let authoritativeMessageId = null;
       const streamingResponses = new Map();
       const completedMessageIds = new Set();
       const recentResponseHashes = new Set();
@@ -1631,8 +1632,20 @@
         });
       }
 
+      function makeAssistantStreamAuthoritative(messageId) {
+        if (!messageId) return;
+        authoritativeMessageId = messageId;
+        streamingResponses.forEach((stream, existingMessageId) => {
+          if (existingMessageId === messageId) return;
+          if (stream.element) stream.element.remove();
+          hideThinkingIndicator(existingMessageId);
+          streamingResponses.delete(existingMessageId);
+        });
+      }
+
       function appendAssistantStream(messageId, delta, interactionId = null) {
         if (!messageId || typeof delta !== 'string') return;
+        if (messageId !== authoritativeMessageId) return;
         if (!streamingResponses.has(messageId)) startAssistantStream(messageId, interactionId);
         const stream = streamingResponses.get(messageId);
         if (!stream) return;
@@ -1768,6 +1781,7 @@
         // Replace transcription LLM handler to store text + snippets
         whysperAPI.onTranscriptionLlmResponseStart((event, data) => {
           if (data && data.messageId) {
+            makeAssistantStreamAuthoritative(data.messageId);
             const pendingSpeechThinking = chatMessages && chatMessages.querySelector('.message.assistant.thinking[data-thinking-for=""]');
             if (pendingSpeechThinking) pendingSpeechThinking.dataset.thinkingFor = data.messageId;
             startAssistantStream(data.messageId, data.interactionId || null);
@@ -1781,17 +1795,25 @@
         });
 
         whysperAPI.onTranscriptionLlmResponse((event, data) => {
-          if (data && data.response) {
-            const messageId = data.messageId || (data.metadata && data.metadata.messageId);
-            if (!completeAssistantStream(messageId, data.response)) {
-              try { hideThinkingIndicator(); } catch (_) {}
-              renderAssistantResponse(data.response);
-            }
+          if (!data) return;
+          const messageId = data.messageId || (data.metadata && data.metadata.messageId);
+          if (!messageId || messageId !== authoritativeMessageId) return;
+          const response = typeof data.response === 'string' ? data.response : '';
+          if (!response.trim()) {
+            const stream = streamingResponses.get(messageId);
+            if (stream?.element) stream.element.remove();
+            streamingResponses.delete(messageId);
+            hideThinkingIndicator(messageId);
+            return;
+          }
+          if (!completeAssistantStream(messageId, response)) {
+            try { hideThinkingIndicator(); } catch (_) {}
+            renderAssistantResponse(response);
           }
         });
 
         whysperAPI.onTranscriptionNoResponse((event, data) => {
-          if (!data || !data.messageId) return;
+          if (!data || !data.messageId || data.messageId !== authoritativeMessageId) return;
           const stream = streamingResponses.get(data.messageId);
           if (!stream) return;
           if (data.interactionId && stream.interactionId && data.interactionId !== stream.interactionId) return;
