@@ -1,7 +1,7 @@
 const path = require("path");
 const fs = require("fs");
 const { fileURLToPath } = require("url");
-const { app, BrowserWindow, dialog, globalShortcut, session, ipcMain } = require("electron");
+const { app, BrowserWindow, desktopCapturer, dialog, globalShortcut, session, ipcMain } = require("electron");
 
 const MAX_SESSION_DOCUMENT_FILE_SIZE_BYTES = 10 * 1024 * 1024;
 const ALLOWED_SESSION_DOCUMENT_EXTENSIONS = new Set([".txt", ".md", ".markdown", ".docx", ".pdf", ".pptx", ".csv", ".xlsx", ".xls"]);
@@ -267,6 +267,14 @@ class ApplicationController {
       responseBackgroundColor: process.env.RESPONSE_BACKGROUND_COLOR,
     });
     this.speechAvailable = false;
+    this.systemAudioDiagnostics = {
+      active: false,
+      chunks: 0,
+      totalBytes: 0,
+      intervalPeakRms: 0,
+      nonSilentAudioDetected: false,
+      lastLogAt: 0,
+    };
 
     // Utterance coalescing: VAD emits a transcript per natural pause, but a
     // single spoken question can still arrive as a few fragments (mid-thought
@@ -488,12 +496,9 @@ class ApplicationController {
 
   setupPermissions() {
     const appSession = session.defaultSession;
-    const isTrustedAppContents = (webContents) => {
-      if (!webContents || webContents.isDestroyed()) {
-        return false;
-      }
+    const isTrustedAppUrl = (url) => {
       try {
-        const pagePath = path.resolve(fileURLToPath(webContents.getURL()));
+        const pagePath = path.resolve(fileURLToPath(url));
         const appRoot = path.resolve(__dirname);
         const normalizeForComparison = (value) => process.platform === "win32"
           ? value.toLowerCase()
@@ -505,6 +510,40 @@ class ApplicationController {
         return false;
       }
     };
+    const isTrustedAppContents = (webContents) => {
+      if (!webContents || webContents.isDestroyed()) {
+        return false;
+      }
+      return isTrustedAppUrl(webContents.getURL());
+    };
+
+    if (process.platform === "win32" && typeof appSession.setDisplayMediaRequestHandler === "function") {
+      appSession.setDisplayMediaRequestHandler(async (request, callback) => {
+        const requestingUrl = request && request.frame ? request.frame.url : "";
+        if (!isTrustedAppUrl(requestingUrl)) {
+          logger.warn("Rejected untrusted system audio capture request");
+          callback({});
+          return;
+        }
+
+        try {
+          const sources = await desktopCapturer.getSources({
+            types: ["screen"],
+            thumbnailSize: { width: 0, height: 0 },
+          });
+          const source = sources.find((candidate) => candidate.id.startsWith("screen:")) || sources[0];
+          if (!source) {
+            logger.warn("No screen source available for system audio capture");
+            callback({});
+            return;
+          }
+          callback({ video: source, audio: "loopback" });
+        } catch (error) {
+          logger.warn("Unable to grant system audio capture", { error: error.message });
+          callback({});
+        }
+      });
+    }
 
     // Electron exposes camera/microphone access as the single `media`
     // permission. The requested device type is provided separately in details.
@@ -789,6 +828,63 @@ class ApplicationController {
 
     ipcMain.handle("toggle-ai-response-window", () => {
       return { visible: this.toggleAIResponseWindow() };
+    });
+
+    ipcMain.on("system-audio-capture-state", (_event, data) => {
+      const active = data && data.active === true;
+      if (!active && this.systemAudioDiagnostics.active) {
+        logger.info("System audio capture stopped", {
+          chunks: this.systemAudioDiagnostics.chunks,
+          totalBytes: this.systemAudioDiagnostics.totalBytes,
+          nonSilentAudioDetected: this.systemAudioDiagnostics.nonSilentAudioDetected,
+        });
+      }
+      this.systemAudioDiagnostics = {
+        active,
+        chunks: 0,
+        totalBytes: 0,
+        intervalPeakRms: 0,
+        nonSilentAudioDetected: false,
+        lastLogAt: Date.now(),
+      };
+      if (active) logger.info("System audio capture started");
+    });
+
+    ipcMain.on("system-audio-chunk", (_event, data) => {
+      if (process.platform !== "win32" || !data || !data.buffer) return;
+      const pcm = Buffer.from(data.buffer);
+      if (!pcm.length) return;
+
+      const diagnostics = this.systemAudioDiagnostics;
+      diagnostics.active = true;
+      diagnostics.chunks += 1;
+      diagnostics.totalBytes += pcm.length;
+
+      const sampleCount = Math.floor(pcm.length / 2);
+      let sumSquares = 0;
+      for (let index = 0; index < sampleCount; index += 1) {
+        const sample = pcm.readInt16LE(index * 2) / 32768;
+        sumSquares += sample * sample;
+      }
+      const rms = sampleCount ? Math.sqrt(sumSquares / sampleCount) : 0;
+      diagnostics.intervalPeakRms = Math.max(diagnostics.intervalPeakRms, rms);
+
+      const now = Date.now();
+      if (now - diagnostics.lastLogAt < 1000) return;
+      const nonSilent = diagnostics.intervalPeakRms >= 0.005;
+      diagnostics.nonSilentAudioDetected ||= nonSilent;
+      const details = {
+        chunks: diagnostics.chunks,
+        totalBytes: diagnostics.totalBytes,
+        level: Number(diagnostics.intervalPeakRms.toFixed(4)),
+      };
+      if (nonSilent) {
+        logger.info("System audio activity detected", details);
+      } else {
+        logger.debug("System audio capture active (silence)", details);
+      }
+      diagnostics.intervalPeakRms = 0;
+      diagnostics.lastLogAt = now;
     });
 
     ipcMain.on("acknowledge-telemetry-render", (event, { interactionId, target } = {}) => {

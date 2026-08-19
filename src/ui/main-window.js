@@ -24,6 +24,13 @@ class MainWindowUI {
         this._mediaStream = null;
         this._scriptNode = null;
         this._captureInterval = null;
+        // Windows system-audio POC state. Kept fully separate from microphone capture.
+        this._systemAudioStream = null;
+        this._systemAudioContext = null;
+        this._systemAudioSource = null;
+        this._systemAudioProcessor = null;
+        this._systemAudioCaptureActive = false;
+        this._systemAudioCaptureAttempt = 0;
         
         // Define available skills for navigation
         this.availableSkills = [];
@@ -701,6 +708,9 @@ class MainWindowUI {
         if (useRendererCapture) {
             this._startRendererAudioCapture();
         }
+        if (platform.includes('win')) {
+            this._startSystemAudioCapture();
+        }
         logger.debug('Recording started', { component: 'MainWindowUI' });
     }
 
@@ -712,6 +722,7 @@ class MainWindowUI {
             this.recordButton.title = 'Start Voice Recording';
         }
         this._stopRendererAudioCapture();
+        this._stopSystemAudioCapture();
         logger.debug('Recording stopped', { component: 'MainWindowUI' });
     }
 
@@ -797,6 +808,109 @@ class MainWindowUI {
                 component: 'MainWindowUI',
                 error: error.message
             });
+        }
+    }
+
+    async _startSystemAudioCapture() {
+        this._stopSystemAudioCapture();
+        const captureAttempt = ++this._systemAudioCaptureAttempt;
+
+        try {
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
+                throw new Error('Display media capture is unavailable');
+            }
+
+            const stream = await navigator.mediaDevices.getDisplayMedia({
+                audio: true,
+                video: true
+            });
+
+            if (captureAttempt !== this._systemAudioCaptureAttempt || !this.isRecording) {
+                stream.getTracks().forEach((track) => track.stop());
+                return;
+            }
+
+            const audioTracks = stream.getAudioTracks();
+            if (audioTracks.length === 0) {
+                stream.getTracks().forEach((track) => track.stop());
+                throw new Error('System audio stream did not contain an audio track');
+            }
+
+            // Electron requires a display source for loopback capture. The video
+            // track is not rendered or retained by this audio-only POC.
+            stream.getVideoTracks().forEach((track) => track.stop());
+            this._systemAudioStream = stream;
+
+            const audioContext = new (window.AudioContext || window.webkitAudioContext)({
+                sampleRate: 16000
+            });
+            this._systemAudioContext = audioContext;
+            const source = audioContext.createMediaStreamSource(stream);
+            this._systemAudioSource = source;
+            const processor = audioContext.createScriptProcessor(4096, 1, 1);
+            this._systemAudioProcessor = processor;
+
+            processor.onaudioprocess = (event) => {
+                if (!this._systemAudioCaptureActive || !window.electronAPI?.sendSystemAudioChunk) {
+                    return;
+                }
+                const inputData = event.inputBuffer.getChannelData(0);
+                const pcm16 = new Int16Array(inputData.length);
+                for (let index = 0; index < inputData.length; index += 1) {
+                    const sample = Math.max(-1, Math.min(1, inputData[index]));
+                    pcm16[index] = sample < 0 ? sample * 0x8000 : sample * 0x7FFF;
+                }
+                window.electronAPI.sendSystemAudioChunk(pcm16.buffer);
+            };
+
+            source.connect(processor);
+            processor.connect(audioContext.destination);
+            this._systemAudioCaptureActive = true;
+            audioTracks[0].addEventListener('ended', () => {
+                if (this._systemAudioStream === stream) this._stopSystemAudioCapture();
+            }, { once: true });
+            window.electronAPI?.setSystemAudioCaptureState?.(true);
+            logger.info('Windows system audio capture started', {
+                component: 'MainWindowUI',
+                sampleRate: audioContext.sampleRate
+            });
+        } catch (error) {
+            if (captureAttempt === this._systemAudioCaptureAttempt) {
+                this._stopSystemAudioCapture();
+                logger.warn('Windows system audio capture unavailable; microphone remains active', {
+                    component: 'MainWindowUI',
+                    error: error.message
+                });
+            }
+        }
+    }
+
+    _stopSystemAudioCapture() {
+        this._systemAudioCaptureAttempt += 1;
+        const wasActive = this._systemAudioCaptureActive;
+        this._systemAudioCaptureActive = false;
+
+        if (this._systemAudioProcessor) {
+            this._systemAudioProcessor.onaudioprocess = null;
+            try { this._systemAudioProcessor.disconnect(); } catch (_) {}
+            this._systemAudioProcessor = null;
+        }
+        if (this._systemAudioSource) {
+            try { this._systemAudioSource.disconnect(); } catch (_) {}
+            this._systemAudioSource = null;
+        }
+        if (this._systemAudioStream) {
+            const stream = this._systemAudioStream;
+            this._systemAudioStream = null;
+            stream.getTracks().forEach((track) => track.stop());
+        }
+        if (this._systemAudioContext) {
+            this._systemAudioContext.close().catch(() => {});
+            this._systemAudioContext = null;
+        }
+        if (wasActive) {
+            window.electronAPI?.setSystemAudioCaptureState?.(false);
+            logger.info('Windows system audio capture stopped', { component: 'MainWindowUI' });
         }
     }
 
