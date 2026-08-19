@@ -37,6 +37,16 @@ function normalizeAudioResponseMode(value) {
   return ALLOWED_AUDIO_RESPONSE_MODES.has(normalized) ? normalized : "all";
 }
 
+function normalizeBooleanSetting(value, defaultValue = false) {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === "true") return true;
+    if (normalized === "false") return false;
+  }
+  return defaultValue;
+}
+
 const OBVIOUS_SPEECH_ACKNOWLEDGEMENTS = new Set([
   "okay", "ok", "right", "alright", "got it", "makes sense", "that makes sense",
   "sounds good", "sure", "perfect", "great", "understood", "interesting", "thank you",
@@ -249,6 +259,7 @@ class ApplicationController {
     this.codingLanguage = "";
     this.customCodingLanguage = "";
     this.respondTo = "all";
+    this.showSystemEvents = normalizeBooleanSetting(process.env.SHOW_SYSTEM_EVENTS, false);
     this.appearance = normalizeAppearance({
       windowOpacity: process.env.WINDOW_OPACITY,
       responseFontSize: process.env.RESPONSE_FONT_SIZE,
@@ -2282,6 +2293,7 @@ class ApplicationController {
       customCodingLanguage: this.customCodingLanguage,
       customSkill: this.customSkill,
       respondTo: this.respondTo,
+      showSystemEvents: this.showSystemEvents,
       activeSkill: this.activeSkill,
       activeProfile: this.activeProfile,
       appIcon: this.appIcon || "terminal",
@@ -2328,6 +2340,12 @@ class ApplicationController {
         this.respondTo = normalizeAudioResponseMode(settings.respondTo);
         windowManager.broadcastToAllWindows("respond-to-changed", {
           respondTo: this.respondTo,
+        });
+      }
+      if (Object.prototype.hasOwnProperty.call(settings, "showSystemEvents")) {
+        this.showSystemEvents = normalizeBooleanSetting(settings.showSystemEvents, false);
+        windowManager.broadcastToAllWindows("show-system-events-changed", {
+          showSystemEvents: this.showSystemEvents,
         });
       }
       if (Object.prototype.hasOwnProperty.call(settings, "activeSkill")) {
@@ -2379,6 +2397,9 @@ class ApplicationController {
       // Writing to .env ensures they survive app restarts and are picked
       // up the next time the app boots.
       const envUpdates = {};
+      if (Object.prototype.hasOwnProperty.call(settings, "showSystemEvents")) {
+        envUpdates.SHOW_SYSTEM_EVENTS = String(this.showSystemEvents);
+      }
       if (appearanceKeys.some(key => Object.prototype.hasOwnProperty.call(settings, key))) {
         envUpdates.WINDOW_OPACITY = String(this.appearance.windowOpacity);
         envUpdates.RESPONSE_FONT_SIZE = String(this.appearance.responseFontSize);

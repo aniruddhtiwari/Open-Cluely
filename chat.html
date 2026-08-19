@@ -990,6 +990,7 @@
       let listeningStartTime = null;
       let listeningTimer = null;
       let speechAvailable = false;
+      let showSystemEvents = false;
       let sessionDocumentStatusTimer = null;
       let exportStatusTimer = null;
       const EVIDENCE_TYPE_LABELS = Object.freeze({
@@ -1282,6 +1283,21 @@
       loadHistory();
       initSpeechAvailability();
       loadSessionDocuments();
+      initializeSystemEventPreference();
+
+      async function initializeSystemEventPreference() {
+        try {
+          const settings = await whysperAPI?.getSettings?.();
+          showSystemEvents = settings?.showSystemEvents === true;
+        } catch (error) {
+          console.warn('Failed to load system event preference', error);
+          showSystemEvents = false;
+        }
+
+        if (showSystemEvents && (!chatHistory || chatHistory.length === 0)) {
+          addMessage('Recording in Progress. press Alt+M to stop recording.', 'system');
+        }
+      }
 
       // Basic message function with markdown support for assistant messages
       function addMessage(text, type = 'user', skipPersist = false, metadata = {}) {
@@ -1444,7 +1460,9 @@
         }
 
         hideListeningAnimation();
-        addMessage('Stopped Listening', 'system');
+        if (showSystemEvents) {
+          addMessage('Stopped Listening', 'system');
+        }
       }
 
       function handleTranscription(text) {
@@ -1709,7 +1727,9 @@
         // Listen for speech status
         whysperAPI.onSpeechStatus((event, data) => {
           if (data && data.status) {
-            addMessage(data.status, 'system');
+            if (showSystemEvents) {
+              addMessage(data.status, 'system');
+            }
             const status = String(data.status).toLowerCase();
 
             if (status.includes('stopped') || status.includes('ended')) {
@@ -1735,6 +1755,10 @@
 
         whysperAPI.onRecordingStopped(() => {
           handleRecordingStopped();
+        });
+
+        whysperAPI.onShowSystemEventsChanged((event, data) => {
+          showSystemEvents = data?.showSystemEvents === true;
         });
 
         whysperAPI.onSessionCleared(() => {
@@ -2010,10 +2034,6 @@
         });
       }
 
-      // Initialize
-      if (!chatHistory || chatHistory.length === 0) {
-        addMessage('Recording in Progress. press Alt+M to stop recording.', 'system');
-      }
     </script>
   </body>
 </html>

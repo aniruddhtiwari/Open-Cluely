@@ -33,6 +33,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const responseFontSizeValue = document.getElementById('responseFontSizeValue');
     const responseTextColorInput = document.getElementById('responseTextColor');
     const responseBackgroundColorInput = document.getElementById('responseBackgroundColor');
+    const showSystemEventsSelect = document.getElementById('showSystemEvents');
     const resetAppearanceButton = document.getElementById('resetAppearance');
 
     // Check if window.api exists
@@ -162,6 +163,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (responseFontSizeValue) responseFontSizeValue.textContent = `${responseFontSizeInput.value}px`;
         if (responseTextColorInput) responseTextColorInput.value = settings.responseTextColor || '#ffffff';
         if (responseBackgroundColorInput) responseBackgroundColorInput.value = settings.responseBackgroundColor || '#111827';
+        if (showSystemEventsSelect) showSystemEventsSelect.value = settings.showSystemEvents === true ? 'on' : 'off';
 
         if (codingLanguageSelect) {
             codingLanguageSelect.value = settings.codingLanguage || '';
@@ -274,6 +276,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (responseFontSizeInput) settings.responseFontSize = Number(responseFontSizeInput.value);
         if (responseTextColorInput) settings.responseTextColor = responseTextColorInput.value;
         if (responseBackgroundColorInput) settings.responseBackgroundColor = responseBackgroundColorInput.value;
+        if (showSystemEventsSelect) settings.showSystemEvents = showSystemEventsSelect.value === 'on';
         window.api.send('save-settings', settings);
     };
 
@@ -322,7 +325,8 @@ document.addEventListener('DOMContentLoaded', () => {
         whisperResponseTargetSelect,
         whisperSegmentMsInput,
         geminiKeyInput,
-        windowGapInput
+        windowGapInput,
+        showSystemEventsSelect
     ];
 
     inputs.forEach(input => {

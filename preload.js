@@ -134,6 +134,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onCodingLanguageChanged: (callback) => ipcRenderer.on('coding-language-changed', callback),
   onProfileChanged: (callback) => ipcRenderer.on('profile-changed', callback),
   onAppearanceChanged: (callback) => ipcRenderer.on('appearance-changed', callback),
+  onShowSystemEventsChanged: (callback) => ipcRenderer.on('show-system-events-changed', callback),
   onAIResponseVisibilityChanged: (callback) => ipcRenderer.on('ai-response-visibility-changed', callback),
   onChatWindowVisibilityChanged: (callback) => ipcRenderer.on('chat-window-visibility-changed', callback),
   onMainWindowShown: (callback) => ipcRenderer.on('main-window-shown', callback),
