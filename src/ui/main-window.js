@@ -855,11 +855,7 @@ class MainWindowUI {
                     return;
                 }
                 const inputData = event.inputBuffer.getChannelData(0);
-                const pcm16 = new Int16Array(inputData.length);
-                for (let index = 0; index < inputData.length; index += 1) {
-                    const sample = Math.max(-1, Math.min(1, inputData[index]));
-                    pcm16[index] = sample < 0 ? sample * 0x8000 : sample * 0x7FFF;
-                }
+                const pcm16 = this._float32To16KhzPcm(inputData, audioContext.sampleRate);
                 window.electronAPI.sendSystemAudioChunk(pcm16.buffer);
             };
 
@@ -883,6 +879,26 @@ class MainWindowUI {
                 });
             }
         }
+    }
+
+    _float32To16KhzPcm(inputData, sourceSampleRate) {
+        const targetSampleRate = 16000;
+        const outputLength = sourceSampleRate === targetSampleRate
+            ? inputData.length
+            : Math.max(1, Math.round(inputData.length * targetSampleRate / sourceSampleRate));
+        const pcm16 = new Int16Array(outputLength);
+
+        for (let index = 0; index < outputLength; index += 1) {
+            const sourcePosition = index * sourceSampleRate / targetSampleRate;
+            const leftIndex = Math.min(inputData.length - 1, Math.floor(sourcePosition));
+            const rightIndex = Math.min(inputData.length - 1, leftIndex + 1);
+            const fraction = sourcePosition - leftIndex;
+            const interpolated = inputData[leftIndex] +
+                (inputData[rightIndex] - inputData[leftIndex]) * fraction;
+            const sample = Math.max(-1, Math.min(1, interpolated));
+            pcm16[index] = sample < 0 ? sample * 0x8000 : sample * 0x7FFF;
+        }
+        return pcm16;
     }
 
     _stopSystemAudioCapture() {

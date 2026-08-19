@@ -426,6 +426,7 @@ class SpeechService extends EventEmitter {
     this.audioProgram = null;
     this.whisperCommand = null;
     this.whisperWorker = new WhisperWorkerService();
+    this.sharedTranscriptionQueue = Promise.resolve();
     this.isProcessingAudio = false;
     this.manualStopRequested = false;
     this._resetVadState();
@@ -1201,6 +1202,36 @@ class SpeechService extends EventEmitter {
     return this.provider === 'whisper' && this._getWhisperCaptureMode() === 'manual';
   }
 
+  getWhisperVadSettings() {
+    return {
+      silenceHangoverMs: this._getSilenceHangoverMs(),
+      minUtteranceMs: this._getMinUtteranceMs(),
+      maxUtteranceMs: this._getMaxUtteranceMs(),
+      preRollMs: this._getPreRollMs(),
+      energyFloor: this._getVadEnergyFloor()
+    };
+  }
+
+  transcribePcmBuffer(audioBuffer, { source = 'mic' } = {}) {
+    if (this.provider !== 'whisper' || !this.whisperCommand) {
+      return Promise.reject(new Error('Local Whisper is not available'));
+    }
+    const pcm = Buffer.isBuffer(audioBuffer) ? audioBuffer : Buffer.from(audioBuffer || []);
+    const task = async () => {
+      const startedAt = Date.now();
+      const transcript = await this._transcribeWhisperBuffer(pcm);
+      const clean = transcript ? transcript.trim() : '';
+      return {
+        text: clean && !this._isHallucinatedTranscript(clean) ? clean : '',
+        source: source === 'speaker' ? 'speaker' : 'mic',
+        processingTime: Date.now() - startedAt
+      };
+    };
+    const queued = this.sharedTranscriptionQueue.then(task, task);
+    this.sharedTranscriptionQueue = queued.catch(() => {});
+    return queued;
+  }
+
   shutdown() {
     this.isRecording = false;
     this.isProcessingAudio = false;
@@ -1831,12 +1862,14 @@ class SpeechService extends EventEmitter {
     this.transcriptionInFlight = true;
 
     try {
-      const transcript = await this._transcribeWhisperBuffer(audioBuffer);
-      const clean = transcript ? transcript.trim() : '';
-      if (clean && !this._isHallucinatedTranscript(clean)) {
-        this.emit('transcription', clean);
-      } else if (clean) {
-        logger.debug('Dropped likely Whisper silence hallucination', { transcript: clean });
+      const result = await this.transcribePcmBuffer(audioBuffer, { source: 'mic' });
+      if (result.text) {
+        logger.info('Finalized audio transcription', {
+          source: 'mic',
+          textPreview: result.text.substring(0, 100),
+          processingTime: result.processingTime
+        });
+        this.emit('transcription', result.text);
       }
     } finally {
       this.transcriptionInFlight = false;

@@ -236,6 +236,8 @@ process.on("unhandledRejection", (reason) => {
 // Screen capture (image-based)
 const captureService = require("./src/services/capture.service");
 const speechService = require("./src/services/speech.service");
+const SystemAudioTranscriptionService = require("./src/services/system-audio-transcription.service");
+const systemAudioTranscriptionService = new SystemAudioTranscriptionService(speechService);
 const llmService = require("./src/services/llm.service");
 const knowledgeRetrievalService = require("./src/services/knowledge-retrieval.service");
 const responseGuidanceService = require("./src/services/response-guidance.service");
@@ -280,10 +282,10 @@ class ApplicationController {
     // single spoken question can still arrive as a few fragments (mid-thought
     // pauses). We buffer fragments and debounce so one question yields one LLM
     // call instead of several slow, half-answered ones.
-    this._utteranceBuffer = "";
-    this._utteranceFragments = [];
-    this._utteranceSource = "mic";
-    this._utteranceTimer = null;
+    this._utteranceStates = new Map([
+      ["mic", { buffer: "", fragments: [], timer: null }],
+      ["speaker", { buffer: "", fragments: [], timer: null }],
+    ]);
     this._utteranceDispatchInFlight = false;
     this._utteranceCoalesceMs = 800;
 
@@ -638,15 +640,24 @@ class ApplicationController {
 
   setupServiceEventHandlers() {
     speechService.on("recording-started", () => {
+      if (speechService.getStatus().provider === "whisper") {
+        systemAudioTranscriptionService.startSession();
+      }
       windowManager.handleRecordingStarted();
     });
 
     speechService.on("recording-stopped", () => {
+      systemAudioTranscriptionService.stopSession();
+      this.preserveBufferedSpeakerContext();
       windowManager.handleRecordingStopped();
     });
 
     speechService.on("transcription", (text) => {
       this.handleTranscriptionFragment(text, "mic");
+    });
+
+    systemAudioTranscriptionService.on("transcription", ({ text, source }) => {
+      this.handleTranscriptionFragment(text, source);
     });
 
     speechService.on("interim-transcription", (text) => {
@@ -847,13 +858,22 @@ class ApplicationController {
         nonSilentAudioDetected: false,
         lastLogAt: Date.now(),
       };
-      if (active) logger.info("System audio capture started");
+      if (active) {
+        const speechStatus = speechService.getStatus();
+        if (speechStatus.isRecording && speechStatus.provider === "whisper") {
+          systemAudioTranscriptionService.startSession();
+        }
+        logger.info("System audio capture started");
+      } else {
+        systemAudioTranscriptionService.stopSession();
+      }
     });
 
     ipcMain.on("system-audio-chunk", (_event, data) => {
       if (process.platform !== "win32" || !data || !data.buffer) return;
       const pcm = Buffer.from(data.buffer);
       if (!pcm.length) return;
+      systemAudioTranscriptionService.handlePcmChunk(pcm);
 
       const diagnostics = this.systemAudioDiagnostics;
       diagnostics.active = true;
@@ -1726,32 +1746,48 @@ class ApplicationController {
     }
 
     // Route speech UI events according to the user's response-target setting.
-    this.sendToVoiceResponseWindows("transcription-received", { text: fragment });
+    const normalizedSource = source === "speaker" ? "speaker" : "mic";
+    this.sendToVoiceResponseWindows("transcription-received", {
+      text: fragment,
+      source: normalizedSource,
+    });
 
-    if (!this._utteranceBuffer) {
-      this._utteranceSource = source === "speaker" ? "speaker" : "mic";
-    }
-    this._utteranceBuffer = this._utteranceBuffer
-      ? `${this._utteranceBuffer} ${fragment}`
+    const state = this._utteranceStates.get(normalizedSource);
+    state.buffer = state.buffer
+      ? `${state.buffer} ${fragment}`
       : fragment;
-    this._utteranceFragments.push(fragment);
+    state.fragments.push(fragment);
 
-    if (this._utteranceTimer) {
-      clearTimeout(this._utteranceTimer);
-      this._utteranceTimer = null;
+    if (state.timer) {
+      clearTimeout(state.timer);
+      state.timer = null;
     }
 
     // Manual capture emits one complete transcript after the user presses stop,
     // so no debounce/coalescing delay is needed.
     if (speechService.isManualCaptureMode()) {
-      this.dispatchCoalescedUtterance();
+      this.dispatchCoalescedUtterance(normalizedSource);
       return;
     }
 
-    this._utteranceTimer = setTimeout(() => {
-      this._utteranceTimer = null;
-      this.dispatchCoalescedUtterance();
+    state.timer = setTimeout(() => {
+      state.timer = null;
+      this.dispatchCoalescedUtterance(normalizedSource);
     }, this._utteranceCoalesceMs);
+  }
+
+  preserveBufferedSpeakerContext() {
+    const state = this._utteranceStates.get("speaker");
+    if (state.timer) {
+      clearTimeout(state.timer);
+      state.timer = null;
+    }
+    const combined = state.buffer.trim();
+    state.buffer = "";
+    state.fragments = [];
+    if (combined) {
+      sessionManager.addUserInput(combined, "speech", { audioSource: "speaker" });
+    }
   }
 
   /**
@@ -1759,22 +1795,22 @@ class ApplicationController {
    * running, leave the buffer intact and let that dispatch's completion pick it
    * up — so we never pile up overlapping requests for the same person talking.
    */
-  async dispatchCoalescedUtterance() {
+  async dispatchCoalescedUtterance(source = "mic") {
     if (this._utteranceDispatchInFlight) {
       return;
     }
-    const combined = this._utteranceBuffer.trim();
+    const normalizedSource = source === "speaker" ? "speaker" : "mic";
+    const state = this._utteranceStates.get(normalizedSource);
+    const combined = state.buffer.trim();
     if (!combined) {
       return;
     }
-    const rawTranscription = this._utteranceFragments.join(" ");
-    const source = this._utteranceSource;
-    this._utteranceBuffer = "";
-    this._utteranceFragments = [];
-    this._utteranceSource = "mic";
+    const rawTranscription = state.fragments.join(" ");
+    state.buffer = "";
+    state.fragments = [];
 
-    if (!shouldAutomaticallyRespondToAudio(this.respondTo, source, combined)) {
-      sessionManager.addUserInput(combined, "speech");
+    if (!shouldAutomaticallyRespondToAudio(this.respondTo, normalizedSource, combined)) {
+      sessionManager.addUserInput(combined, "speech", { audioSource: normalizedSource });
       return;
     }
 
@@ -1790,7 +1826,7 @@ class ApplicationController {
     });
 
     try {
-      await this.processTranscriptionWithLLM(combined, rawTranscription, interactionId);
+      await this.processTranscriptionWithLLM(combined, rawTranscription, interactionId, normalizedSource);
     } catch (error) {
       sessionTelemetryManager.failInteraction(interactionId, error);
       logger.error("Failed to process transcription with LLM", {
@@ -1800,13 +1836,15 @@ class ApplicationController {
     } finally {
       this._utteranceDispatchInFlight = false;
       // Anything that arrived while we were busy gets answered now.
-      if (this._utteranceBuffer.trim()) {
-        this.dispatchCoalescedUtterance();
-      }
+      const pendingSource = ["mic", "speaker"].find((candidate) => {
+        const pendingState = this._utteranceStates.get(candidate);
+        return !pendingState.timer && pendingState.buffer.trim();
+      });
+      if (pendingSource) this.dispatchCoalescedUtterance(pendingSource);
     }
   }
 
-  async processTranscriptionWithLLM(text, rawTranscription = text, existingInteractionId = null) {
+  async processTranscriptionWithLLM(text, rawTranscription = text, existingInteractionId = null, audioSource = "mic") {
     // Hoisted so the catch block can tie a fallback answer to the same UI
     // bubble the streaming start event created; otherwise a total failure
     // leaves an empty streamed bubble stranded next to the fallback message.
@@ -1843,7 +1881,7 @@ class ApplicationController {
       const conversationalContext = this.getConversationalRequestContext(cleanText);
 
       // Store only the finalized/coalesced utterance, not each partial speech fragment.
-      sessionManager.addUserInput(cleanText, 'speech');
+      sessionManager.addUserInput(cleanText, 'speech', { audioSource });
 
       const localSpeechDecision = classifyObviousNonActionableSpeech(cleanText);
       if (localSpeechDecision.bypass) {

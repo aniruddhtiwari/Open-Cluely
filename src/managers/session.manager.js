@@ -125,12 +125,13 @@ class SessionManager {
   /**
    * Add user transcription or chat input
    */
-  addUserInput(text, source = 'chat') {
+  addUserInput(text, source = 'chat', metadata = {}) {
     return this.addConversationEvent({
       role: 'user',
       content: text,
       action: source === 'speech' ? 'speech_transcription' : 'chat_input',
       metadata: {
+        ...metadata,
         source,
         textLength: text.length
       }

@@ -1466,14 +1466,16 @@
         }
       }
 
-      function handleTranscription(text) {
+      function handleTranscription(text, source = 'mic') {
         if (text && typeof text === 'string' && text.trim().length > 0) {
           // Hide listening animation first
           hideListeningAnimation();
 
           // Show transcribed text with slight delay for smooth transition
           setTimeout(() => {
-            addMessage(text.trim(), 'transcription');
+            addMessage(text.trim(), 'transcription', false, {
+              source: source === 'speaker' ? 'speaker' : 'mic'
+            });
             
             // Show thinking indicator after transcription
             setTimeout(() => {
@@ -1725,7 +1727,7 @@
       if (whysperAPI) {
         whysperAPI.onTranscriptionReceived((event, data) => {
           if (data && data.text) {
-            handleTranscription(data.text);
+            handleTranscription(data.text, data.source);
           } else {
             console.warn('Invalid transcription data received:', data);
           }
