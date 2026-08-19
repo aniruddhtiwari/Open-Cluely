@@ -608,6 +608,7 @@
                         streamingInteractionId = data.interactionId || null;
                         streamingResponse = '';
                     }
+                    if (streamingResponse.length === 0 && !data.delta.trim()) return;
                     const isFirstChunk = streamingResponse.length === 0;
                     streamingResponse += data.delta;
                     if (isFirstChunk) hideLoadingState();
@@ -666,13 +667,14 @@
         function showLoadingState() {
             const loadingElement = document.getElementById('loading');
             const responseElement = document.getElementById('response-content');
+            const hasExistingResponse = !!responseElement?.textContent?.trim();
             
             if (loadingElement) {
-                loadingElement.classList.remove('hidden');
-                loadingElement.style.display = ''; // Remove any forced display styles
+                loadingElement.classList.toggle('hidden', hasExistingResponse);
+                loadingElement.style.display = hasExistingResponse ? 'none' : '';
             }
             
-            if (responseElement) {
+            if (responseElement && !hasExistingResponse) {
                 responseElement.classList.add('hidden');
             }
             
