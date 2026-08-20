@@ -4,6 +4,7 @@ const config = require('../core/config');
 const { promptLoader } = require('../../prompt-loader');
 const promptBuilderService = require('./prompt-builder.service');
 const NO_RESPONSE_TOKEN = '[[NO_RESPONSE]]';
+const USE_GEMINI_INTERACTIONS_SESSION = process.env.USE_GEMINI_INTERACTIONS_SESSION === 'true';
 
 class LLMService {
   constructor() {
@@ -12,11 +13,26 @@ class LLMService {
     this.isInitialized = false;
     this.requestCount = 0;
     this.errorCount = 0;
+    this.interactionSession = {
+      currentInteractionId: null,
+      interactionIdsCreated: [],
+      interactionModel: null,
+      interactionNumber: 0,
+      generation: 1,
+      unavailableGeneration: null
+    };
+    this.interactionQueue = Promise.resolve();
     
     this.initializeClient();
   }
 
   initializeClient() {
+    if (this.client) {
+      this.resetInteractionSession({ reason: 'gemini-client-reinitialized' });
+    }
+    this.client = null;
+    this.model = null;
+    this.isInitialized = false;
     const apiKey = config.getApiKey('GEMINI');
     
     if (!apiKey || apiKey === 'your-api-key-here') {
@@ -359,33 +375,9 @@ class LLMService {
       );
       this.logKnowledgePerformance(knowledgeMetadata);
 
-      const preferAlternative = !!config.get('llm.gemini.enableFallbackMethod');
-      let response;
-      try {
-        if (preferAlternative) {
-          logger.debug('Attempting alternative HTTPS method first for text processing');
-          response = await this.executeAlternativeRequest(geminiRequest);
-        } else {
-          response = await this.executeRequest(geminiRequest);
-        }
-      } catch (error) {
-        const secondaryLabel = preferAlternative ? 'primary SDK method' : 'alternative HTTPS method';
-        logger.warn(`${preferAlternative ? 'Alternative' : 'Primary'} method failed, trying ${secondaryLabel}`, {
-          error: error.message,
-          requestId: this.requestCount
-        });
-        const secondaryFn = preferAlternative ? this.executeRequest.bind(this) : this.executeAlternativeRequest.bind(this);
-        try {
-          response = await secondaryFn(geminiRequest);
-        } catch (secondaryError) {
-          logger.error('Both Gemini request methods failed for text processing', {
-            firstError: error.message,
-            secondError: secondaryError.message,
-            requestId: this.requestCount
-          });
-          throw secondaryError;
-        }
-      }
+      const conversationResult = await this.executeConversationRequest(geminiRequest);
+      const response = conversationResult.text;
+      knowledgeMetadata.interactionTelemetry = conversationResult.interactionTelemetry;
       
       const finalResponse = response;
 
@@ -471,11 +463,12 @@ class LLMService {
       );
       this.logKnowledgePerformance(knowledgeMetadata);
 
-      const fullText = await this.executeStreamingRequest(geminiRequest, (delta) => {
+      const conversationResult = await this.executeConversationStreamingRequest(geminiRequest, (delta) => {
         if (typeof onDelta === 'function' && delta) {
           onDelta(delta);
         }
       });
+      const fullText = conversationResult.text;
 
       const finalResponse = fullText;
 
@@ -495,10 +488,12 @@ class LLMService {
           requestId: this.requestCount,
           usedFallback: false,
           streamed: true,
-          ...knowledgeMetadata
+          ...knowledgeMetadata,
+          interactionTelemetry: conversationResult.interactionTelemetry
         }
       };
     } catch (error) {
+      if (error?.partialInteractionOutput) throw error;
       logger.warn('Streaming text failed, falling back to non-streaming', {
         error: error.message,
         requestId: this.requestCount
@@ -567,33 +562,9 @@ class LLMService {
       );
       this.logKnowledgePerformance(knowledgeMetadata);
 
-      const preferAlternative = !!config.get('llm.gemini.enableFallbackMethod');
-      let response;
-      try {
-        if (preferAlternative) {
-          logger.debug('Attempting alternative HTTPS method first for transcription processing');
-          response = await this.executeAlternativeRequest(geminiRequest);
-        } else {
-          response = await this.executeRequest(geminiRequest);
-        }
-      } catch (error) {
-        const secondaryLabel = preferAlternative ? 'primary SDK method' : 'alternative HTTPS method';
-        logger.warn(`${preferAlternative ? 'Alternative' : 'Primary'} method failed, trying ${secondaryLabel}`, {
-          error: error.message,
-          requestId: this.requestCount
-        });
-        const secondaryFn = preferAlternative ? this.executeRequest.bind(this) : this.executeAlternativeRequest.bind(this);
-        try {
-          response = await secondaryFn(geminiRequest);
-        } catch (secondaryError) {
-          logger.error('Both Gemini request methods failed for transcription processing', {
-            firstError: error.message,
-            secondError: secondaryError.message,
-            requestId: this.requestCount
-          });
-          throw secondaryError;
-        }
-      }
+      const conversationResult = await this.executeConversationRequest(geminiRequest);
+      const response = conversationResult.text;
+      knowledgeMetadata.interactionTelemetry = conversationResult.interactionTelemetry;
       
       const finalResponse = response;
 
@@ -832,6 +803,54 @@ class LLMService {
     });
 
     return { request, promptMetadata: promptComponents.metadata };
+  }
+
+  isInteractionsSessionEnabled() {
+    return USE_GEMINI_INTERACTIONS_SESSION;
+  }
+
+  resetInteractionSession({ reason = 'session-reset', deleteStored = true } = {}) {
+    const previousIds = [...this.interactionSession.interactionIdsCreated];
+    const previousClient = this.client;
+    this.interactionSession = {
+      currentInteractionId: null,
+      interactionIdsCreated: [],
+      interactionModel: null,
+      interactionNumber: 0,
+      generation: this.interactionSession.generation + 1,
+      unavailableGeneration: null
+    };
+
+    logger.info('Gemini interaction chain reset', {
+      reason,
+      storedInteractionCount: previousIds.length,
+      deletionRequested: deleteStored && previousIds.length > 0
+    });
+
+    if (!deleteStored || !previousClient?.interactions || previousIds.length === 0) return;
+    // Interactions are stored provider-side for server-managed continuity.
+    // Deletion is best-effort; OpenCluely remains the authoritative state.
+    Promise.allSettled(previousIds.map(id => previousClient.interactions.delete(id)))
+      .then(results => {
+        logger.info('Gemini stored interaction deletion completed', {
+          requested: previousIds.length,
+          deleted: results.filter(result => result.status === 'fulfilled').length,
+          failed: results.filter(result => result.status === 'rejected').length
+        });
+      })
+      .catch(() => {});
+  }
+
+  getInteractionSessionStats() {
+    return {
+      enabled: USE_GEMINI_INTERACTIONS_SESSION,
+      interactionNumber: this.interactionSession.interactionNumber,
+      hasPreviousInteraction: !!this.interactionSession.currentInteractionId,
+      storedInteractionCount: this.interactionSession.interactionIdsCreated.length,
+      interactionModel: this.interactionSession.interactionModel,
+      generation: this.interactionSession.generation,
+      statelessFallbackActive: this.interactionSession.unavailableGeneration === this.interactionSession.generation
+    };
   }
 
   composeTextSystemInstruction(responseGuidance, skillAndProfilePrompt, programmingLanguage = null, activeSkill = '', customSkill = '', customCodingLanguage = '') {
@@ -1392,11 +1411,12 @@ Remember: Be intelligent about filtering - only provide detailed responses when 
       );
       this.logKnowledgePerformance(knowledgeMetadata);
 
-      const fullText = await this.executeStreamingRequest(geminiRequest, (delta) => {
+      const conversationResult = await this.executeConversationStreamingRequest(geminiRequest, (delta) => {
         if (typeof onDelta === 'function' && delta) {
           onDelta(delta);
         }
       });
+      const fullText = conversationResult.text;
 
       const finalResponse = fullText;
 
@@ -1417,10 +1437,12 @@ Remember: Be intelligent about filtering - only provide detailed responses when 
           usedFallback: false,
           streamed: true,
           isTranscriptionResponse: true,
-          ...knowledgeMetadata
+          ...knowledgeMetadata,
+          interactionTelemetry: conversationResult.interactionTelemetry
         }
       };
     } catch (error) {
+      if (error?.partialInteractionOutput) throw error;
       logger.warn('Streaming transcription failed, falling back to non-streaming', {
         error: error.message,
         requestId: this.requestCount
@@ -1524,6 +1546,261 @@ Remember: Be intelligent about filtering - only provide detailed responses when 
     }
 
     throw lastError || new Error('Gemini streaming request failed');
+  }
+
+  async executeConversationRequest(geminiRequest) {
+    return this.enqueueConversationRequest(async queueWaitMs => {
+      if (!this.shouldUseInteractionsForCurrentGeneration()) {
+        return {
+          text: await this.executeConfiguredStatelessRequest(geminiRequest),
+          interactionTelemetry: this.createStatelessInteractionTelemetry(geminiRequest, queueWaitMs)
+        };
+      }
+
+      try {
+        return await this.executeInteractionRequest(geminiRequest, null, queueWaitMs);
+      } catch (error) {
+        if (this.isInteractionsApiUnavailableError(error)) {
+          this.disableInteractionsForCurrentGeneration('non-streaming-api-failure', error);
+        } else {
+          logger.warn('Gemini interaction failed; preserving last successful chain head', { error: error.message });
+        }
+        return {
+          text: await this.executeConfiguredStatelessRequest(geminiRequest),
+          interactionTelemetry: this.createStatelessInteractionTelemetry(geminiRequest, queueWaitMs, true)
+        };
+      }
+    });
+  }
+
+  async executeConversationStreamingRequest(geminiRequest, onDelta) {
+    return this.enqueueConversationRequest(async queueWaitMs => {
+      if (!this.shouldUseInteractionsForCurrentGeneration()) {
+        return {
+          text: await this.executeStreamingRequest(geminiRequest, onDelta),
+          interactionTelemetry: this.createStatelessInteractionTelemetry(geminiRequest, queueWaitMs)
+        };
+      }
+
+      let emittedContent = false;
+      const guardedDelta = delta => {
+        if (delta) emittedContent = true;
+        if (typeof onDelta === 'function') onDelta(delta);
+      };
+      try {
+        return await this.executeInteractionRequest(geminiRequest, guardedDelta, queueWaitMs);
+      } catch (error) {
+        if (this.isInteractionsApiUnavailableError(error)) {
+          this.disableInteractionsForCurrentGeneration('streaming-api-failure', error);
+        } else {
+          logger.warn('Gemini streaming interaction failed; preserving last successful chain head', { error: error.message });
+        }
+        if (emittedContent) {
+          error.partialInteractionOutput = true;
+          throw error;
+        }
+        return {
+          text: await this.executeStreamingRequest(geminiRequest, onDelta),
+          interactionTelemetry: this.createStatelessInteractionTelemetry(geminiRequest, queueWaitMs, true)
+        };
+      }
+    });
+  }
+
+  async executeConfiguredStatelessRequest(geminiRequest) {
+    const preferAlternative = !!config.get('llm.gemini.enableFallbackMethod');
+    const primary = preferAlternative
+      ? this.executeAlternativeRequest.bind(this)
+      : this.executeRequest.bind(this);
+    const secondary = preferAlternative
+      ? this.executeRequest.bind(this)
+      : this.executeAlternativeRequest.bind(this);
+    try {
+      return await primary(geminiRequest);
+    } catch (error) {
+      logger.warn('Configured stateless Gemini method failed; trying secondary method', {
+        preferredMethod: preferAlternative ? 'alternative-https' : 'sdk',
+        error: error.message
+      });
+      return secondary(geminiRequest);
+    }
+  }
+
+  async enqueueConversationRequest(operation) {
+    if (!USE_GEMINI_INTERACTIONS_SESSION) return operation(0);
+    const queuedAt = Date.now();
+    const run = this.interactionQueue
+      .catch(() => {})
+      .then(() => operation(Date.now() - queuedAt));
+    this.interactionQueue = run.then(() => undefined, () => undefined);
+    return run;
+  }
+
+  shouldUseInteractionsForCurrentGeneration() {
+    return USE_GEMINI_INTERACTIONS_SESSION &&
+      !!this.client?.interactions &&
+      this.interactionSession.unavailableGeneration !== this.interactionSession.generation;
+  }
+
+  async executeInteractionRequest(geminiRequest, onDelta, queueWaitMs) {
+    const generation = this.interactionSession.generation;
+    const model = this.model;
+    if (this.interactionSession.interactionModel && this.interactionSession.interactionModel !== model) {
+      this.resetInteractionSession({ reason: 'model-change' });
+      return this.executeInteractionRequest(geminiRequest, onDelta, queueWaitMs);
+    }
+
+    const previousInteractionId = this.interactionSession.currentInteractionId;
+    const interactionNumber = this.interactionSession.interactionNumber + 1;
+    const input = this.buildInteractionInput(geminiRequest.contents);
+    const serializedInput = JSON.stringify(input);
+    const params = {
+      model,
+      input,
+      stream: typeof onDelta === 'function',
+      store: true,
+      system_instruction: this.extractInteractionSystemInstruction(geminiRequest),
+      generation_config: this.buildInteractionGenerationConfig(geminiRequest.generationConfig),
+      ...(previousInteractionId ? { previous_interaction_id: previousInteractionId } : {})
+    };
+    if (!params.system_instruction) delete params.system_instruction;
+    if (!params.generation_config || Object.keys(params.generation_config).length === 0) delete params.generation_config;
+
+    const startedAt = Date.now();
+    let text = '';
+    let completedInteraction = null;
+    let usage = null;
+
+    if (params.stream) {
+      const stream = await this.client.interactions.create(params);
+      for await (const event of stream) {
+        if (event?.event_type === 'step.delta' && event.delta?.type === 'text' && event.delta.text) {
+          text += event.delta.text;
+          onDelta(event.delta.text);
+        }
+        if (event?.metadata?.total_usage) usage = event.metadata.total_usage;
+        if (event?.event_type === 'interaction.completed') {
+          completedInteraction = event.interaction;
+          usage = event.interaction?.usage || event.metadata?.total_usage || usage;
+        }
+      }
+    } else {
+      const interaction = await this.client.interactions.create(params);
+      if (interaction?.status !== 'completed') {
+        throw new Error(`Gemini interaction did not complete successfully: ${interaction?.status || 'unknown'}`);
+      }
+      completedInteraction = interaction;
+      usage = interaction.usage || null;
+      text = interaction.output_text || '';
+    }
+
+    if (!completedInteraction?.id || completedInteraction.status !== 'completed' || !text.trim()) {
+      throw new Error(`Gemini interaction stream ended without a completed text interaction`);
+    }
+
+    if (generation !== this.interactionSession.generation) {
+      throw new Error('Gemini interaction completed after its OpenCluely session was reset');
+    }
+
+    this.interactionSession.currentInteractionId = completedInteraction.id;
+    this.interactionSession.interactionIdsCreated.push(completedInteraction.id);
+    this.interactionSession.interactionModel = model;
+    this.interactionSession.interactionNumber = interactionNumber;
+
+    const interactionTelemetry = {
+      transport: 'interactions',
+      interactionNumber,
+      hasPreviousInteraction: !!previousInteractionId,
+      queueWaitMs,
+      processingTimeMs: Date.now() - startedAt,
+      inputCharacters: serializedInput.length,
+      inputBytes: Buffer.byteLength(serializedInput),
+      inputTokens: usage?.total_input_tokens ?? null,
+      cachedTokens: usage?.total_cached_tokens ?? null,
+      outputTokens: usage?.total_output_tokens ?? null,
+      totalTokens: usage?.total_tokens ?? null,
+      modelVersion: completedInteraction.model || model
+    };
+    logger.info('Gemini interaction completed', interactionTelemetry);
+    return { text, interactionTelemetry };
+  }
+
+  buildInteractionInput(contents = []) {
+    return contents
+      .filter(content => content && Array.isArray(content.parts))
+      .map(content => {
+        const text = content.parts
+          .filter(part => typeof part?.text === 'string')
+          .map(part => part.text)
+          .join('\n');
+        return {
+          type: content.role === 'model' ? 'model_output' : 'user_input',
+          content: [{ type: 'text', text }]
+        };
+      })
+      .filter(step => step.content[0].text.trim());
+  }
+
+  extractInteractionSystemInstruction(geminiRequest) {
+    return geminiRequest.systemInstruction?.parts
+      ?.filter(part => typeof part?.text === 'string')
+      .map(part => part.text)
+      .join('\n') || '';
+  }
+
+  buildInteractionGenerationConfig(generationConfig = {}) {
+    return Object.fromEntries(Object.entries({
+      temperature: generationConfig.temperature,
+      top_p: generationConfig.topP,
+      max_output_tokens: generationConfig.maxOutputTokens,
+      stop_sequences: generationConfig.stopSequences,
+      // Interactions exposes thinking_level rather than generateContent's
+      // thinkingBudget. Keep the release-tested no-thinking intent as close as
+      // the Interactions API permits while this transport remains opt-in.
+      thinking_level: generationConfig.thinkingConfig?.thinkingBudget === 0 ? 'minimal' : undefined
+    }).filter(([, value]) => value !== undefined && value !== null));
+  }
+
+  createStatelessInteractionTelemetry(geminiRequest, queueWaitMs, fallback = false) {
+    const serializedInput = JSON.stringify(geminiRequest.contents || []);
+    return {
+      transport: 'stateless',
+      interactionNumber: this.interactionSession.interactionNumber,
+      hasPreviousInteraction: false,
+      queueWaitMs,
+      inputCharacters: serializedInput.length,
+      inputBytes: Buffer.byteLength(serializedInput),
+      interactionsFallback: fallback
+    };
+  }
+
+  disableInteractionsForCurrentGeneration(reason, error) {
+    const oldIds = [...this.interactionSession.interactionIdsCreated];
+    const client = this.client;
+    this.interactionSession.currentInteractionId = null;
+    this.interactionSession.interactionIdsCreated = [];
+    this.interactionSession.interactionModel = null;
+    this.interactionSession.interactionNumber = 0;
+    this.interactionSession.unavailableGeneration = this.interactionSession.generation;
+    logger.warn('Gemini Interactions disabled for current OpenCluely session; using stateless fallback', {
+      reason,
+      error: error?.message,
+      storedInteractionCount: oldIds.length
+    });
+    if (client?.interactions && oldIds.length) {
+      Promise.allSettled(oldIds.map(id => client.interactions.delete(id))).catch(() => {});
+    }
+  }
+
+  isInteractionsApiUnavailableError(error) {
+    const status = Number(error?.status || error?.statusCode || error?.code);
+    const message = String(error?.message || '').toLowerCase();
+    return [400, 404, 405, 410, 501].includes(status) ||
+      message.includes('previous_interaction_id') ||
+      message.includes('previous interaction') ||
+      message.includes('interactions api') ||
+      message.includes('unsupported') ||
+      message.includes('unimplemented');
   }
 
   _streamRequestForModel(geminiRequest, modelName, apiKey, onDelta) {
@@ -1937,7 +2214,8 @@ Remember: Be intelligent about filtering - only provide detailed responses when 
       requestCount: this.requestCount,
       errorCount: this.errorCount,
       successRate: this.requestCount > 0 ? ((this.requestCount - this.errorCount) / this.requestCount) * 100 : 0,
-      config: config.get('llm.gemini')
+      config: config.get('llm.gemini'),
+      interactionSession: this.getInteractionSessionStats()
     };
   }
 

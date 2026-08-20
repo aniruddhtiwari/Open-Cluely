@@ -993,6 +993,9 @@ class ApplicationController {
       }
 
       const success = sessionManager.removeSessionDocument(id.trim());
+      if (success) {
+        llmService.resetInteractionSession({ reason: "session-document-removed" });
+      }
       logger.info("Session document removal requested", {
         documentId: id.trim(),
         success
@@ -1005,6 +1008,9 @@ class ApplicationController {
 
     ipcMain.handle("clear-session-documents", () => {
       const removedCount = sessionManager.clearSessionDocuments();
+      if (removedCount > 0) {
+        llmService.resetInteractionSession({ reason: "session-documents-cleared" });
+      }
       logger.info("Session documents cleared", { removedCount });
       return { removedCount, documents: [] };
     });
@@ -1414,6 +1420,7 @@ class ApplicationController {
     try {
       sessionManager.clear();
       sessionTelemetryManager.clear();
+      llmService.resetInteractionSession({ reason: "opencluely-session-cleared" });
       windowManager.broadcastToAllWindows("session-cleared");
       logger.info("Session memory cleared via global shortcut");
     } catch (error) {
