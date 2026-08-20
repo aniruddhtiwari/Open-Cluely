@@ -25,9 +25,27 @@ function classifyObviousNonActionableSpeech(text) {
 
   const questionOrRequestStart = /^(?:(?:so|and|but)\s+)?(?:what|why|how|when|where|which|who)\b/;
   const auxiliaryQuestionStart = /^(?:can you|could you|would you|will you|do you|did you|have you|has anyone|are you|were you|is there|are there)\b/;
-  const interviewRequestStart = /^(?:please\s+)?(?:tell me|walk me through|explain|describe|give me|show me|compare|design|discuss)\b/;
+  const interviewRequestStart = /^(?:please\s+)?(?:tell me|walk me through|explain|describe|give me|help me|show me|compare|summarize|design|discuss)\b/;
   const assistanceRequest = /\b(?:how should i|what should i|how do i|what do i say|can you explain|can you help|how would i|how would you|what would i)\b/;
-  if (raw.includes('?') || questionOrRequestStart.test(normalized) ||
+  const embeddedRequest = /(?:^|[.!;:]\s+)(?:please\s+)?(?:tell me|walk me through|explain|describe|give me|help me|show me|compare|summarize|design|discuss)\b/i;
+  if (raw.includes('?') || assistanceRequest.test(normalized) || embeddedRequest.test(raw)) {
+    return { bypass: false };
+  }
+
+  const reportedRequest = /^(?:(?:they|he|she|the interviewer)\s+asked\s+(?:me|us)\s+to|i\s+was\s+asked\s+to)\b/;
+  const declarativeQuestionLabel = /^(?:the\s+)?(?:main\s+)?question(?:\s+for\s+(?:us|me))?\s+(?:is|was)\b/;
+  const whatNarrative = /^what\s+we\s+(?:found|discovered|learned|observed)\s+was\b/;
+  const howNarrative = /^how\s+we\s+(?:solved|handled|addressed|resolved|fixed)(?:\s+(?:it|this|that))?\s+was\b/;
+  const whyNarrative = /^why\s+this\s+(?:mattered|was\s+important)\s+(?:is|was)\b/;
+  if (reportedRequest.test(normalized)) {
+    return { bypass: true, reason: 'reported-request-narrative' };
+  }
+  if (declarativeQuestionLabel.test(normalized) || whatNarrative.test(normalized) ||
+      howNarrative.test(normalized) || whyNarrative.test(normalized)) {
+    return { bypass: true, reason: 'declarative-question-narrative' };
+  }
+
+  if (questionOrRequestStart.test(normalized) ||
       auxiliaryQuestionStart.test(normalized) || interviewRequestStart.test(normalized) ||
       assistanceRequest.test(normalized)) {
     return { bypass: false };

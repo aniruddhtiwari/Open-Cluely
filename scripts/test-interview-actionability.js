@@ -101,26 +101,51 @@ add('incomplete', 'MIC', EXPECTED.AMBIGUOUS, [
   'The system was'
 ]);
 
-add('declarative-question-like', 'MIC', EXPECTED.AMBIGUOUS, [
+add('declarative-question-like', 'MIC', EXPECTED.NON_ACTIONABLE, [
   'The question for us is data quality.',
   'What we found was that validation took too long.',
   'How we solved it was through better validation.',
-  'Why this mattered was reporting accuracy.',
+  'Why this mattered was reporting accuracy.'
+]);
+add('declarative-question-like', 'MIC', EXPECTED.AMBIGUOUS, [
   'Can you believe the system had twenty feeds.'
 ], { provider: true });
+add('declarative-question-variant', 'SYSTEM', EXPECTED.NON_ACTIONABLE, [
+  'The question was scalability.',
+  'The main question is data quality.',
+  'What we found was latency.',
+  'How we solved it was through batching.'
+]);
 
 add('imperative', 'SYSTEM', EXPECTED.ACTIONABLE, [
   'Tell me about SCD Type 2.',
   'Explain the architecture.',
   'Walk me through the migration.',
-  'Describe the issue.'
+  'Describe the issue.',
+  'Help me understand the trade-offs.',
+  'Compare batch and streaming.',
+  'Summarize the approach.'
+]);
+add('narrative', 'MIC', EXPECTED.NON_ACTIONABLE, [
+  'They asked me to tell them about SCD Type 2.',
+  'They asked me to explain the architecture.',
+  'They asked us to describe the migration.',
+  'I was asked to walk through the project.',
+  'I was asked to explain the architecture.',
+  'They asked us to walk through the migration.'
 ]);
 add('narrative', 'MIC', EXPECTED.AMBIGUOUS, [
-  'They asked me to tell them about SCD Type 2.',
   'I explained the architecture.',
   'I walked them through the migration.',
   'I described the issue to the team.'
 ], { provider: true });
+
+add('narrative-request-override', 'MIC', EXPECTED.ACTIONABLE, [
+  'They asked me about Kafka. What should I say?',
+  'The question is data quality. How would you answer?',
+  'What we found was latency. Can you help me explain it?',
+  'How we solved it was batching. Give me a concise answer.'
+]);
 
 add('mic-answer', 'MIC', EXPECTED.AMBIGUOUS, [
   'Yes. In my current project...',
@@ -141,6 +166,13 @@ add('short-follow-up', 'SYSTEM', EXPECTED.ACTIONABLE, [
   'Why?', 'How so?', 'And the result?'
 ]);
 
+add('realistic-sequence', 'SYSTEM', EXPECTED.NON_ACTIONABLE, [
+  'Our team has several legacy systems.'
+]);
+add('realistic-sequence', 'SYSTEM', EXPECTED.ACTIONABLE, [
+  'How would you approach that?'
+]);
+
 function diagnose(item, decision) {
   return `${item.id} source=${item.source} text=${JSON.stringify(item.text)} expected=${item.expected} ` +
     `actual=${decision.bypass ? 'LOCAL_BYPASS' : 'GEMINI_CAPABLE'} reason=${decision.reason || 'none'}`;
@@ -148,10 +180,13 @@ function diagnose(item, decision) {
 
 const started = performance.now();
 let classificationMs = 0;
+let maxClassificationMs = 0;
 const results = cases.map(item => {
   const itemStarted = performance.now();
   const decision = classifyObviousNonActionableSpeech(item.text);
-  classificationMs += performance.now() - itemStarted;
+  const elapsedMs = performance.now() - itemStarted;
+  classificationMs += elapsedMs;
+  maxClassificationMs = Math.max(maxClassificationMs, elapsedMs);
 
   if (item.expected === EXPECTED.NON_ACTIONABLE) {
     assert.equal(decision.bypass, true, diagnose(item, decision));
@@ -194,9 +229,11 @@ console.log(`ACTIONABLE ROUTING PASS RATE: ${rate(passed(EXPECTED.ACTIONABLE), a
 console.log(`NON_ACTIONABLE LOCAL SUPPRESSION RATE: ${rate(passed(EXPECTED.NON_ACTIONABLE), nonActionable)}`);
 console.log(`MIC EXPLICIT REQUEST ROUTING RATE: ${rate(micRequests.filter(item => !item.decision.bypass).length, micRequests.length)}`);
 console.log(`CORRECTION LOCAL SUPPRESSION RATE: ${rate(correctionCases.filter(item => item.decision.bypass).length, correctionCases.length)}; remaining cases require provider decision after storage`);
-console.log(`IMPERATIVE/NARRATIVE PAIR PASS RATE: ${rate(pairCases.filter(item => item.expected === EXPECTED.ACTIONABLE ? !item.decision.bypass : !item.decision.bypass).length, pairCases.length)} baseline routes preserved`);
+console.log(`IMPERATIVE/NARRATIVE PAIR PASS RATE: ${rate(pairCases.filter(item =>
+  item.expected === EXPECTED.NON_ACTIONABLE ? item.decision.bypass : !item.decision.bypass
+).length, pairCases.length)} baseline routes preserved`);
 console.log(`MIXED CONTEXT+REQUEST PASS RATE: ${rate(mixed.filter(item => !item.decision.bypass).length, mixed.length)}`);
-console.log(`LOCAL EXECUTION: ${(performance.now() - started).toFixed(3)} ms total; ${(classificationMs / results.length).toFixed(4)} ms average classification`);
+console.log(`LOCAL EXECUTION: ${(performance.now() - started).toFixed(3)} ms total; ${(classificationMs / results.length).toFixed(4)} ms average classification; ${maxClassificationMs.toFixed(4)} ms max classification`);
 
 async function runProviderCases() {
   if (process.env.OPENCLUELY_ACTIONABILITY_PROVIDER_TEST !== 'true') return;
