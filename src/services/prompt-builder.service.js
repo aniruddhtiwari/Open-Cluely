@@ -28,7 +28,39 @@ const EVIDENCE_SECTIONS = Object.freeze({
   })
 });
 
+const PERSONAL_EXPERIENCE_ACTIONS = 'worked|used|built|implemented|developed|designed|deployed|configured|managed|led|presented|sold|negotiated|delivered|owned|supported|advised|consulted|launched|migrated|facilitated|partnered';
+const PERSONAL_EXPERIENCE_ACTION_FORMS = `${PERSONAL_EXPERIENCE_ACTIONS}|work|use|build|implement|develop|design|deploy|configure|manage|lead|present|sell|negotiate|deliver|own|support|advise|consult|launch|migrate|facilitate|partner|working|using|building|implementing|developing|designing|deploying|configuring|managing|leading|presenting|selling|negotiating|delivering|owning|supporting|advising|consulting|launching|migrating|facilitating|partnering`;
+
 class PromptBuilderService {
+  isPersonalExperienceQuestion(question) {
+    if (typeof question !== 'string') return false;
+    const normalized = question.replace(/\s+/g, ' ').trim();
+    if (!normalized) return false;
+    const action = PERSONAL_EXPERIENCE_ACTION_FORMS;
+    const patterns = [
+      /\b(?:tell me about|describe|walk me through)\s+your\s+(?:hands-on\s+)?(?:.+?\s+)?experience\b/i,
+      /\bwhat\s+(?:hands-on\s+)?experience\s+do\s+you\s+have\b/i,
+      /\bhow\s+(?:much|many\s+years?\s+of)\s+.+?experience\s+do\s+you\s+have\b/i,
+      new RegExp(`\\bhow\\s+long\\s+have\\s+you\\s+(?:${action})\\b`, 'i'),
+      new RegExp(`\\bhave\\s+you\\s+(?:ever\\s+)?(?:${action})\\b`, 'i'),
+      new RegExp(`\\bdid\\s+you\\s+(?:ever\\s+)?(?:${action})\\b`, 'i'),
+      /\byour\s+(?:hands-on\s+|direct\s+|professional\s+)?experience\s+(?:with|in|using)\b/i
+    ];
+    return patterns.some(pattern => pattern.test(normalized));
+  }
+
+  buildPersonalExperienceClaimGuard(question) {
+    if (!this.isPersonalExperienceQuestion(question)) return '';
+    return [
+      'PERSONAL EXPERIENCE CLAIM GUARD — HIGH PRIORITY',
+      'This question asks about the person\'s own hands-on experience. Do not make any first-person experience, implementation, duration, project, or usage claim unless candidate-owned evidence in this request explicitly supports that claim.',
+      'Candidate-owned evidence may include an attributable explicit live self-statement or correction, Manual Session Context, CANDIDATE EVIDENCE from a resume/session document, or an already-established attributable personal project fact.',
+      'The following are not candidate-experience evidence by themselves: SYSTEM AUDIO statements about "our team", "we use", or "our environment"; interviewer, employer, role, or job-description statements; generic model knowledge; and a technology merely appearing in the current question.',
+      'Never infer that the candidate used a technology because another live speaker, team, company, role, or job description uses or requests it. A requested number of years does not imply a positive duration.',
+      'If direct personal experience is not established, answer truthfully without inventing it. You may give a neutral or conditional approach, or mention transferable experience only when that adjacent experience is itself supported. This guard does not suppress explicitly supported positive or limited experience.'
+    ].join('\n\n');
+  }
+
   buildKnowledgeAugmentedUserMessage(question, selectedChunks = []) {
     const normalizedQuestion = this.normalizeQuestion(question);
     const preparedKnowledge = this.prepareSelectedChunks(selectedChunks);
@@ -39,7 +71,8 @@ class PromptBuilderService {
     question,
     combinedSystemPrompt = '',
     selectedChunks = [],
-    manualSessionContext = ''
+    manualSessionContext = '',
+    liveGroundingContext = ''
   } = {}) {
     const normalizedQuestion = this.normalizeQuestion(question);
     const preparedKnowledge = this.prepareSelectedChunks(selectedChunks);
@@ -49,13 +82,19 @@ class PromptBuilderService {
     const normalizedManualContext = typeof manualSessionContext === 'string'
       ? manualSessionContext.trim()
       : '';
+    const normalizedLiveGrounding = typeof liveGroundingContext === 'string'
+      ? liveGroundingContext.trim()
+      : '';
+    const personalExperienceClaimGuard = this.buildPersonalExperienceClaimGuard(normalizedQuestion);
 
     return {
       systemInstruction,
       userMessage: this.composeUserMessage(
         normalizedQuestion,
         preparedKnowledge.knowledgeSection,
-        normalizedManualContext
+        normalizedManualContext,
+        normalizedLiveGrounding,
+        personalExperienceClaimGuard
       ),
       metadata: {
         usedKnowledge: preparedKnowledge.chunks.length > 0,
@@ -65,7 +104,9 @@ class PromptBuilderService {
         ).size,
         knowledgeCharacters: preparedKnowledge.knowledgeCharacters,
         questionCharacters: normalizedQuestion.length,
-        manualContextCharacters: normalizedManualContext.length
+        manualContextCharacters: normalizedManualContext.length,
+        liveGroundingCharacters: normalizedLiveGrounding.length,
+        personalExperienceClaimGuard: !!personalExperienceClaimGuard
       }
     };
   }
@@ -204,8 +245,13 @@ class PromptBuilderService {
     };
   }
 
-  composeUserMessage(question, knowledgeSection, manualSessionContext = '') {
-    const contextSections = [manualSessionContext, knowledgeSection].filter(Boolean);
+  composeUserMessage(question, knowledgeSection, manualSessionContext = '', liveGroundingContext = '', personalExperienceClaimGuard = '') {
+    const contextSections = [
+      knowledgeSection,
+      manualSessionContext,
+      liveGroundingContext,
+      personalExperienceClaimGuard
+    ].filter(Boolean);
     if (contextSections.length === 0) return question;
     return `${contextSections.join('\n\n')}\n\nCURRENT QUESTION\n\n${question}`;
   }

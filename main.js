@@ -241,6 +241,7 @@ const systemAudioTranscriptionService = new SystemAudioTranscriptionService(spee
 const llmService = require("./src/services/llm.service");
 const knowledgeRetrievalService = require("./src/services/knowledge-retrieval.service");
 const responseGuidanceService = require("./src/services/response-guidance.service");
+const experienceEvidenceService = require("./src/services/experience-evidence.service");
 const documentExtractionService = require("./src/services/document-extraction.service");
 const urlIngestionService = require("./src/services/url-ingestion.service");
 
@@ -1592,6 +1593,73 @@ class ApplicationController {
     }
   }
 
+  handleExperienceEvidenceGate(text, interactionId, { voice = false } = {}) {
+    const startedAt = Date.now();
+    const evaluation = experienceEvidenceService.evaluate(text, sessionManager);
+    if (!evaluation.applicable || evaluation.allowGemini) return false;
+
+    this._responseSeq = (this._responseSeq || 0) + 1;
+    const messageId = `guard-${Date.now()}-${this._responseSeq}`;
+    const startPayload = { messageId, interactionId, skill: this.activeSkill };
+    if (voice) this.sendToVoiceResponseWindows("transcription-llm-response-start", startPayload);
+    else this.sendToStreamingResponseWindows("transcription-llm-response-start", startPayload);
+
+    const processingTime = Date.now() - startedAt;
+    const result = {
+      response: evaluation.response,
+      metadata: {
+        messageId,
+        interactionId,
+        processingTime,
+        usedFallback: false,
+        experienceEvidenceGate: true,
+        experienceEvidenceState: evaluation.state,
+        experienceSubjects: evaluation.subjects
+      }
+    };
+
+    sessionTelemetryManager.completeInteraction(interactionId, result.response);
+    sessionManager.addModelResponse(result.response, {
+      skill: this.activeSkill,
+      processingTime,
+      usedFallback: false,
+      isTranscriptionResponse: voice,
+      experienceEvidenceGate: true,
+      experienceEvidenceState: evaluation.state
+    });
+
+    if (voice) {
+      this.sendTranscriptionLLMResponseToVoiceTargets(result);
+      if (this.shouldShowVoiceOverlay()) {
+        windowManager.showLLMResponse(result.response, {
+          messageId,
+          interactionId,
+          skill: this.activeSkill,
+          processingTime,
+          usedFallback: false,
+          isTranscriptionResponse: true
+        });
+      }
+    } else {
+      this.broadcastTranscriptionLLMResponse(result);
+      windowManager.showLLMResponse(result.response, {
+        messageId,
+        interactionId,
+        skill: this.activeSkill,
+        processingTime,
+        usedFallback: false
+      });
+    }
+
+    logger.info("Personal experience Gemini request bypassed", {
+      interactionId,
+      state: evaluation.state,
+      subjects: evaluation.subjects,
+      processingTime
+    });
+    return true;
+  }
+
   async processWithLLM(text, existingInteractionId = null) {
     const interactionId = existingInteractionId || sessionTelemetryManager.startInteraction({
       inputType: "typed",
@@ -1606,6 +1674,10 @@ class ApplicationController {
 
       // Add user input to session memory
       sessionManager.addUserInput(text, 'llm_input');
+
+      if (this.handleExperienceEvidenceGate(text, interactionId, { voice: false })) {
+        return;
+      }
 
       // Check if current skill needs programming language context
       this._responseSeq = (this._responseSeq || 0) + 1;
@@ -1890,6 +1962,10 @@ class ApplicationController {
           interactionId,
           reason: localSpeechDecision.reason
         });
+        return;
+      }
+
+      if (this.handleExperienceEvidenceGate(cleanText, interactionId, { voice: true })) {
         return;
       }
 

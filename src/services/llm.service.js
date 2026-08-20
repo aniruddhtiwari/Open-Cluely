@@ -709,7 +709,8 @@ class LLMService {
       question: text,
       combinedSystemPrompt,
       selectedChunks,
-      manualSessionContext
+      manualSessionContext,
+      liveGroundingContext: sessionManager.getRecentLiveGroundingBlock()
     });
 
     const request = {
@@ -770,7 +771,8 @@ class LLMService {
       question: text,
       combinedSystemPrompt: combinedPrompt,
       selectedChunks,
-      manualSessionContext
+      manualSessionContext,
+      liveGroundingContext: require('../managers/session.manager').getRecentLiveGroundingBlock()
     });
 
     if (promptComponents.systemInstruction) {
@@ -971,7 +973,10 @@ class LLMService {
       question: cleanText,
       combinedSystemPrompt,
       selectedChunks,
-      manualSessionContext
+      manualSessionContext,
+      liveGroundingContext: sessionManager.getRecentLiveGroundingBlock({
+        excludeLatestContent: cleanText
+      })
     });
     if (promptComponents.systemInstruction) {
       request.systemInstruction = {
@@ -1025,7 +1030,10 @@ class LLMService {
       question: text,
       combinedSystemPrompt,
       selectedChunks,
-      manualSessionContext
+      manualSessionContext,
+      liveGroundingContext: require('../managers/session.manager').getRecentLiveGroundingBlock({
+        excludeLatestContent: text
+      })
     });
     if (promptComponents.systemInstruction) {
       request.systemInstruction = {

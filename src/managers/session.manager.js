@@ -5,11 +5,14 @@ const knowledgeRetrievalService = require('../services/knowledge-retrieval.servi
 
 const MAX_SESSION_DOCUMENT_CONTENT_CHARACTERS = 2000000;
 const MAX_MANUAL_SESSION_CONTEXT_CHARACTERS = 8000;
+const MAX_RECENT_LIVE_UTTERANCES = 10;
+const MAX_RECENT_LIVE_CHARACTERS = 2800;
+const MAX_EXPLICIT_LIVE_FACT_CHARACTERS = 1000;
 const MANUAL_SESSION_CONTEXT_GUIDANCE = [
   'MANUAL SESSION CONTEXT',
   'The user supplied these session facts or instructions directly. Use them when relevant, but do not force them into unrelated answers.',
   'Later manual-context entries override earlier contradictory entries.',
-  'The current explicit interviewer question or clarification overrides older manual session context.'
+  'The current explicit question, request, or clarification overrides older manual session context.'
 ].join('\n\n');
 const SESSION_DOCUMENT_CHUNK_TARGET_CHARACTERS = 1500;
 const SESSION_DOCUMENT_CHUNK_MIN_CHARACTERS = 750;
@@ -291,6 +294,137 @@ class SessionManager {
     }
 
     return [MANUAL_SESSION_CONTEXT_GUIDANCE, ...selectedSections].join('\n\n');
+  }
+
+  isExplicitLiveFact(text) {
+    if (typeof text !== 'string') return false;
+    const normalized = text.replace(/[’]/g, "'").replace(/\s+/g, ' ').trim();
+    if (!normalized) return false;
+
+    const correctionPrefix = /^(?:actually|to clarify|correction|more precisely|i should clarify)[,:]?\s+/i;
+    const statement = normalized.replace(correctionPrefix, '');
+    const explicitPatterns = [
+      /^i\s+(?:have\s+not|haven't|do\s+not|don't)\s+(?:worked|used|had|have|know|built|implemented|developed|configured|designed|deployed|managed|led|presented|sold|negotiated|delivered|owned|supported|advised|consulted|launched|migrated|facilitated|partnered)/i,
+      /^i\s+(?:have\s+never|never)\s+(?:worked|used|had|implemented|built|managed|led|presented|sold|negotiated|delivered|owned|supported|advised|consulted|launched|migrated|facilitated|partnered)/i,
+      /^i\s+(?:have\s+worked|have\s+had|worked|did\s+use|used|use)\b/i,
+      /^i\s+(?:have\s+)?(?:built|implemented|developed|configured|designed|deployed|managed|led|presented|sold|negotiated|delivered|owned|supported|advised|consulted|launched|migrated|facilitated|partnered)\b/i,
+      /^i\s+(?:do\s+)?have\s+(?:(?:direct|hands-on|professional|practical|commercial)\s+)?experience\b/i,
+      /^i\s+have\s+(?:(?:about|over|roughly|approximately)\s+)?(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s+years?\b/i,
+      /^i\s+(?:currently\s+work|work\s+at|am\s+currently)\b/i,
+      /^i'm\s+currently\b/i,
+      /^(?:in\s+)?my\s+current\s+(?:project|role|job|team)\b/i,
+      /^in\s+my\s+project\b/i
+    ];
+    return explicitPatterns.some(pattern => pattern.test(statement));
+  }
+
+  getRecentLiveGroundingBlock({ excludeLatestContent = '' } = {}) {
+    const speechEvents = this.sessionMemory.filter(event => {
+      return event.action === 'speech_transcription' &&
+        typeof event.content === 'string' &&
+        event.content.trim() &&
+        (event.metadata?.audioSource === 'mic' || event.metadata?.audioSource === 'speaker');
+    });
+    const normalizedExclusion = typeof excludeLatestContent === 'string'
+      ? excludeLatestContent.replace(/\s+/g, ' ').trim()
+      : '';
+    const latestSpeech = speechEvents[speechEvents.length - 1];
+    if (
+      normalizedExclusion && latestSpeech &&
+      latestSpeech.content.replace(/\s+/g, ' ').trim() === normalizedExclusion
+    ) {
+      speechEvents.pop();
+    }
+
+    const selected = [];
+    let conversationCharacters = 0;
+    for (
+      let index = speechEvents.length - 1;
+      index >= 0 && selected.length < MAX_RECENT_LIVE_UTTERANCES;
+      index -= 1
+    ) {
+      const event = speechEvents[index];
+      const content = event.content.replace(/\s+/g, ' ').trim();
+      const remaining = MAX_RECENT_LIVE_CHARACTERS - conversationCharacters;
+      if (content.length > remaining) {
+        if (selected.length === 0 && remaining > 0) {
+          selected.unshift({ content: content.slice(0, remaining), audioSource: event.metadata.audioSource });
+        }
+        break;
+      }
+      selected.unshift({ content, audioSource: event.metadata.audioSource });
+      conversationCharacters += content.length;
+    }
+    if (selected.length === 0) return '';
+
+    const label = audioSource => audioSource === 'speaker' ? '[SYSTEM AUDIO]' : '[MIC AUDIO]';
+    const facts = [];
+    let factCharacters = 0;
+    for (let index = selected.length - 1; index >= 0; index -= 1) {
+      const event = selected[index];
+      if (!this.isExplicitLiveFact(event.content)) continue;
+      if (factCharacters + event.content.length > MAX_EXPLICIT_LIVE_FACT_CHARACTERS) break;
+      facts.unshift(`${label(event.audioSource)}\n${event.content}`);
+      factCharacters += event.content.length;
+    }
+
+    const sections = [];
+    if (facts.length > 0) {
+      sections.push([
+        'EXPLICIT RECENT LIVE FACTS / CORRECTIONS — HIGHEST-PRIORITY FACTUAL EVIDENCE',
+        'These are explicit statements from the current live session, in chronological order. Later live statements override earlier conflicting statements.',
+        'Never contradict or strengthen these facts. Reference documents, manual context, external requirements or background, and generic assumptions cannot override a newer explicit live statement.',
+        'Context about another participant or organization does not establish ownership, commitments, experience, numbers, decisions, or capabilities for the local user.',
+        ...facts
+      ].join('\n\n'));
+    }
+
+    sections.push([
+      'RECENT LIVE CONVERSATION — HIGH-PRIORITY CONTEXT',
+      'Most recent last. Use relevant live context above manual context, reference documents, external requirements or background, and generic assumptions. Source labels identify capture paths, not person identities.',
+      'The current question controls what to answer; do not force unrelated live facts into the response. Resolve obvious ASR phonetic errors from context only when confidence is high, without rewriting stored transcripts.',
+      ...selected.map(event => `${label(event.audioSource)}\n${event.content}`)
+    ].join('\n\n'));
+
+    sections.push([
+      'LIVE SPEAKER ATTRIBUTION',
+      'First-person statements belong to the live speaker who uttered them. Never transfer ownership of "I", "my", "we", or "our" claims from one source or speaker into another person\'s experience.',
+      'MIC AUDIO and SYSTEM AUDIO identify capture paths, not person identities. Preserve the source label and use conversational semantics conservatively.',
+      'Statements such as "our team uses", "our environment", or "we use" describe the participant or organization that made them. They may provide useful context, but do not establish another participant\'s ownership or experience.',
+      'Do not transfer personal claims, organizational capabilities, commitments, numbers, or decisions between participants without explicit attributable evidence.'
+    ].join('\n\n'));
+
+    sections.push([
+      'LIVE FACT PRECEDENCE',
+      'When evidence conflicts: newest explicit attributable live correction or fact > recent attributable live conversation > explicit manual/session context > reference documents > external requirements or background > generic assumptions or model knowledge.',
+      'Do not turn reference material, another participant\'s statement, or general knowledge into an unsupported claim of personal ownership, experience, commitment, decision, number, or capability.'
+    ].join('\n\n'));
+
+    return sections.join('\n\n');
+  }
+
+  getExperienceEvidenceSources() {
+    return {
+      // For this specialized personal-experience policy only, MIC is the
+      // conservative V1 local-evidence source. This does not assign a global
+      // person identity to MIC or SYSTEM AUDIO elsewhere in the application.
+      liveFacts: this.sessionMemory
+        .filter(event => {
+          return event.action === 'speech_transcription' &&
+            event.metadata?.audioSource === 'mic' &&
+            typeof event.content === 'string' &&
+            this.isExplicitLiveFact(event.content);
+        })
+        .map(event => ({
+          content: event.content,
+          audioSource: event.metadata?.audioSource || null,
+          timestamp: event.timestamp
+        })),
+      manualContexts: this.manualSessionContexts.map(context => context.content),
+      candidateDocumentChunks: Array.from(this.sessionDocuments.values())
+        .filter(document => document.evidenceType === 'candidate')
+        .flatMap(document => document.chunks.map(chunk => chunk.content))
+    };
   }
 
   /**
