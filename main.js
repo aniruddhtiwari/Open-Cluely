@@ -242,6 +242,7 @@ const llmService = require("./src/services/llm.service");
 const knowledgeRetrievalService = require("./src/services/knowledge-retrieval.service");
 const responseGuidanceService = require("./src/services/response-guidance.service");
 const experienceEvidenceService = require("./src/services/experience-evidence.service");
+const candidateClaimEnforcementService = require("./src/services/candidate-claim-enforcement.service");
 const documentExtractionService = require("./src/services/document-extraction.service");
 const urlIngestionService = require("./src/services/url-ingestion.service");
 
@@ -1667,6 +1668,40 @@ class ApplicationController {
     return true;
   }
 
+  createCandidateClaimEnforcement(question, selectedChunks, onValidatedUnit) {
+    const context = candidateClaimEnforcementService.prepare({
+      question,
+      evidenceSources: sessionManager.getExperienceEvidenceSources(),
+      selectedChunks
+    });
+    return {
+      context,
+      stream: candidateClaimEnforcementService.createStream(context, onValidatedUnit),
+      responseGuidanceSuffix: context.contract
+    };
+  }
+
+  finalizeCandidateClaimEnforcement(llmResult, enforcement) {
+    const finalStream = llmResult.metadata?.streamed === true
+      ? enforcement.stream
+      : candidateClaimEnforcementService.createStream(enforcement.context);
+    const result = finalStream.finalize(llmResult.response);
+    llmResult.response = result.text;
+    llmResult.metadata = {
+      ...llmResult.metadata,
+      candidateClaimEnforcement: {
+        ...enforcement.context.metadata,
+        ...result.metadata,
+        rejectedRawCandidateClaim: result.rejected
+      }
+    };
+
+    if (result.rejected && llmService.isInteractionsSessionEnabled()) {
+      llmService.resetInteractionSession({ reason: "candidate-claim-suppressed" });
+    }
+    return result;
+  }
+
   async processWithLLM(text, existingInteractionId = null) {
     const interactionId = existingInteractionId || sessionTelemetryManager.startInteraction({
       inputType: "typed",
@@ -1715,7 +1750,7 @@ class ApplicationController {
           chunk => chunk.evidenceType === 'reference'
         )
       });
-      const responseGuidance = responseGuidanceService.buildGuidance(classification, {
+      let responseGuidance = responseGuidanceService.buildGuidance(classification, {
         continuity: retrieval.followUpUsed ? continuity : null
       });
       const manualSessionContext = sessionManager.getManualSessionContextBlock();
@@ -1728,12 +1763,9 @@ class ApplicationController {
 
       sessionTelemetryManager.mark(interactionId, "llmRequestStartedAt");
       let firstChunkRecorded = false;
-      const llmResult = await llmService.processTextWithSkillStream(
+      const enforcement = this.createCandidateClaimEnforcement(
         text,
-        this.activeSkill,
-	this.activeProfile,
-	conversationHistory,
-        this.codingLanguage || null,
+        retrieval.selectedChunks,
         (delta) => {
           if (!firstChunkRecorded) {
             firstChunkRecorded = true;
@@ -1744,7 +1776,16 @@ class ApplicationController {
             interactionId,
             delta
           });
-        },
+        }
+      );
+      responseGuidance = [responseGuidance, enforcement.responseGuidanceSuffix].filter(Boolean).join("\n\n");
+      const llmResult = await llmService.processTextWithSkillStream(
+        text,
+        this.activeSkill,
+	this.activeProfile,
+	conversationHistory,
+        this.codingLanguage || null,
+        (delta) => enforcement.stream.push(delta),
         retrieval.selectedChunks,
         {
           retrievalElapsedMs: retrieval.elapsedMs,
@@ -1755,6 +1796,7 @@ class ApplicationController {
         this.customSkill,
         this.customCodingLanguage
       );
+      this.finalizeCandidateClaimEnforcement(llmResult, enforcement);
       llmResult.metadata = { ...llmResult.metadata, messageId, interactionId };
       sessionTelemetryManager.completeInteraction(interactionId, llmResult.response);
 
@@ -2016,7 +2058,7 @@ class ApplicationController {
           chunk => chunk.evidenceType === 'reference'
         )
       });
-      const responseGuidance = responseGuidanceService.buildGuidance(classification, {
+      let responseGuidance = responseGuidanceService.buildGuidance(classification, {
         continuity: retrieval.followUpUsed ? continuity : null
       });
       const manualSessionContext = sessionManager.getManualSessionContextBlock();
@@ -2042,6 +2084,12 @@ class ApplicationController {
           delta
         });
       };
+      const enforcement = this.createCandidateClaimEnforcement(
+        cleanText,
+        retrieval.selectedChunks,
+        sendResponseChunk
+      );
+      responseGuidance = [responseGuidance, enforcement.responseGuidanceSuffix].filter(Boolean).join("\n\n");
       const llmResult = await llmService.processTranscriptionWithIntelligentResponseStream(
         cleanText,
         this.activeSkill,
@@ -2050,7 +2098,7 @@ class ApplicationController {
         this.codingLanguage || null,
         (delta) => {
           if (responseStreamReleased) {
-            sendResponseChunk(delta);
+            enforcement.stream.push(delta);
             return;
           }
 
@@ -2062,7 +2110,7 @@ class ApplicationController {
           if (possibleTokenPrefix || tokenWithOnlyTrailingWhitespace) return;
 
           responseStreamReleased = true;
-          sendResponseChunk(initialResponseBuffer);
+          enforcement.stream.push(initialResponseBuffer);
           initialResponseBuffer = "";
         },
         retrieval.selectedChunks,
@@ -2076,9 +2124,9 @@ class ApplicationController {
         this.customCodingLanguage
       );
       llmResult.metadata = { ...llmResult.metadata, messageId, interactionId };
-      const finalResponse = typeof llmResult.response === "string" ? llmResult.response : "";
-      const isNoResponse = finalResponse.trim() === noResponseToken;
-      const isEmptyResponse = finalResponse.trim().length === 0;
+      const rawFinalResponse = typeof llmResult.response === "string" ? llmResult.response : "";
+      const isNoResponse = rawFinalResponse.trim() === noResponseToken;
+      const isEmptyResponse = rawFinalResponse.trim().length === 0;
       if (isNoResponse || isEmptyResponse) {
         sessionTelemetryManager.completeInteraction(interactionId, null);
         this.sendToVoiceResponseWindows("transcription-no-response", {
@@ -2094,9 +2142,10 @@ class ApplicationController {
 
       if (!responseStreamReleased && initialResponseBuffer && llmResult.metadata.streamed === true) {
         responseStreamReleased = true;
-        sendResponseChunk(initialResponseBuffer);
+        enforcement.stream.push(initialResponseBuffer);
         initialResponseBuffer = "";
       }
+      this.finalizeCandidateClaimEnforcement(llmResult, enforcement);
       sessionTelemetryManager.completeInteraction(interactionId, llmResult.response);
 
       // Add LLM response to session memory
