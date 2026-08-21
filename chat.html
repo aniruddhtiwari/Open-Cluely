@@ -902,10 +902,9 @@
         <div class="knowledge-type-row">
           <label for="knowledgeEvidenceType">Knowledge type:</label>
           <select class="knowledge-type-select" id="knowledgeEvidenceType">
-            <option value="candidate">Candidate / Project</option>
-            <option value="job">Job Description</option>
+            <option value="candidate" selected>My Context</option>
+            <option value="job">Requirements</option>
             <option value="reference">Reference</option>
-            <option value="unknown" selected>Other / Auto</option>
           </select>
         </div>
         <div class="session-document-strip" id="sessionDocumentStrip" hidden>
@@ -994,17 +993,17 @@
       let sessionDocumentStatusTimer = null;
       let exportStatusTimer = null;
       const EVIDENCE_TYPE_LABELS = Object.freeze({
-        candidate: 'Candidate / Project',
-        job: 'Job Description',
+        candidate: 'My Context',
+        job: 'Requirements',
         reference: 'Reference',
-        unknown: 'Other / Auto'
+        unknown: 'Reference'
       });
 
       function getSelectedEvidenceType() {
-        const selected = knowledgeEvidenceType ? knowledgeEvidenceType.value : 'unknown';
+        const selected = knowledgeEvidenceType ? knowledgeEvidenceType.value : 'candidate';
         return Object.prototype.hasOwnProperty.call(EVIDENCE_TYPE_LABELS, selected)
           ? selected
-          : 'unknown';
+          : 'candidate';
       }
 
       // Chat persistence and deduplication
